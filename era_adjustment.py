@@ -1,46 +1,30 @@
 import pandas as pd
-import numpy as np
+from pathlib import Path
 
-print("Loading raw historical data...")
+DATA_DIR = Path(__file__).resolve().parent / "data"
+
+# Load the basic box scores
 try:
-    # 1. Load the master dataset we created in Phase 1
-    df = pd.read_csv("raw_historical_nba.csv")
-    print(f"Successfully loaded {len(df)} games.")
+    df = pd.read_csv(DATA_DIR / "raw_historical_nba.csv")
 except FileNotFoundError:
-    print("Error: 'raw_historical_nba.csv' not found. Please run fetch_history.py first.")
+    print("Error: 'raw_historical_nba.csv' not found in the data folder.")
     exit()
 
-# 2. Define the core stats we want to era-adjust.
-# These are the counting stats that fluctuate heavily depending on the era's pace.
-stats_to_normalize = [
-    'PTS', 'FGM', 'FGA', 'FG3M', 'FG3A', 'FTM', 'FTA', 
-    'OREB', 'DREB', 'REB', 'AST', 'STL', 'BLK', 'TOV', 'PF'
-]
+# Isolate only the actual stats. We ignore ID columns like GAME_ID so we don't accidentally normalize them
+exclude_cols = ['SEASON_ID', 'TEAM_ID', 'GAME_ID', 'MIN', 'VIDEO_AVAILABLE']
+stats_to_normalize = [col for col in df.select_dtypes(include='number').columns if col not in exclude_cols]
 
-print("Calculating era-adjusted Z-scores for each season...")
-
-# 3. Calculate Z-Scores grouped strictly by Season
-# The NBA API provides a 'SEASON_ID' column. We group the data by this ID so that 
-# the mean and standard deviation are calculated purely within that single year.
+# Convert every raw stat into a Z-Score based strictly on its specific season
 for stat in stats_to_normalize:
     if stat in df.columns:
         z_col_name = f"Z_{stat}"
-        
-        # We use pandas .transform() to apply the Z-score formula: (Value - Mean) / Standard Deviation
-        # This keeps the dataframe the exact same shape but appends our new advanced columns.
-        df[z_col_name] = df.groupby('SEASON_ID')[stat].transform(
-            lambda x: (x - x.mean()) / x.std()
-        )
+        df[z_col_name] = df.groupby('SEASON_ID')[stat].transform(lambda x: (x - x.mean()) / x.std())
 
-# 4. Fill any potential NaN values (in case a stat had 0 standard deviation, though rare in NBA data)
+# Fill any missing data with 0 (which perfectly represents the league average in a Z-Score)
 z_cols = [col for col in df.columns if col.startswith('Z_')]
 df[z_cols] = df[z_cols].fillna(0)
 
-# 5. Save the mathematically normalized dataset
-output_file = "era_adjusted_nba.csv"
+# Save the era-adjusted basic stats
+output_file = DATA_DIR / "era_adjusted_nba.csv"
 df.to_csv(output_file, index=False)
-
 print(f"Success! Era-adjusted data saved to '{output_file}'.")
-print("\nHere is a preview of the raw Points vs the new Era-Adjusted Z-Points:")
-# Print a quick preview of the transformation to verify it worked
-print(df[['SEASON_ID', 'GAME_DATE', 'TEAM_ABBREVIATION', 'PTS', 'Z_PTS']].head(10))
