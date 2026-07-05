@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 current_year = datetime.now().year
 current_month = datetime.now().month
@@ -19,11 +20,11 @@ for year in range(2000, end_year + 1):
 
 all_player_logs = []
 
-# Fetch every single individual box score for every game (who played, and for how long)
+# Fetch every single individual box score for every player, for every game
 for season in seasons:
     print(f"Fetching individual player game logs for {season}...")
     try:
-        # player_or_team_abbreviation='P' tells the API we want individual guys, not the whole team
+        # player_or_team_abbreviation='P' tells the API we want individual guys, not the team totals
         game_log = leaguegamelog.LeagueGameLog(
             season=season, 
             season_type_all_star='Regular Season',
@@ -37,9 +38,8 @@ for season in seasons:
 
 if all_player_logs:
     master_logs_df = pd.concat(all_player_logs, ignore_index=True)
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
     output_file = DATA_DIR / "raw_player_game_logs.csv"
     master_logs_df.to_csv(output_file, index=False)
-    print(f"Success! Saved {len(master_logs_df)} individual game performances to '{output_file.name}'.")
+    print(f"Success! Saved {len(master_logs_df)} individual game performances to 'raw_player_game_logs.csv'.")
 else:
     print("Failed to fetch player game logs.")
