@@ -20,11 +20,11 @@ for year in range(2000, end_year + 1):
 
 all_player_logs = []
 
-# Fetch every single individual box score for every player, for every game
+# Download player logs
 for season in seasons:
     print(f"Fetching individual player game logs for {season}...")
     try:
-        # player_or_team_abbreviation='P' tells the API we want individual guys, not the team totals
+        # Ask for player rows only
         game_log = leaguegamelog.LeagueGameLog(
             season=season, 
             season_type_all_star='Regular Season',
