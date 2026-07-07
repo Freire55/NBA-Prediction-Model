@@ -2,9 +2,8 @@
 Learns the optimal ensemble weights for the prediction models.
 
 This module combines the validation-set probability predictions from the
-MLP, XGBoost, and Logistic Regression models using Non-Negative Least
-Squares (NNLS). The resulting normalized weights are later used to
-produce the final ensemble predictions.
+calibrated MLP, XGBoost, and Logistic Regression models using Non-Negative
+Least Squares (NNLS).
 """
 
 from typing import Any, Dict, Tuple
@@ -35,21 +34,19 @@ def learn_ensemble_weights(
     """
     Learns non-negative ensemble weights using validation predictions.
 
-    The predicted probabilities from each base model are stacked into a
-    single matrix and passed to a Non-Negative Least Squares (NNLS)
-    optimizer. The resulting coefficients are normalized to sum to one,
-    producing the final blending weights.
+    Assumes base models are calibrated (e.g., via CalibratedClassifierCV) 
+    to ensure reliable probability estimation for the blending weights.
 
     Parameters
     ----------
     mlp_model : Any
-        Trained MLP classifier.
+        Calibrated MLP classifier.
 
     xgb_model : Any
-        Trained XGBoost classifier.
+        Calibrated XGBoost classifier.
 
     lr_model : Any
-        Trained Logistic Regression classifier.
+        Calibrated Logistic Regression classifier.
 
     X_val_scaled : np.ndarray
         Standardized validation features (used by MLP and LR).
@@ -64,11 +61,10 @@ def learn_ensemble_weights(
     -------
     tuple
         A tuple containing:
-
         - normalized ensemble weights
         - dictionary describing the learned ensemble formula
     """
-    # Generate validation probabilities
+    # Generate validation probabilities from calibrated models
     mlp_probs = mlp_model.predict_proba(X_val_scaled)[:, 1]
     xgb_probs = xgb_model.predict_proba(X_val)[:, 1]
     lr_probs = lr_model.predict_proba(X_val_scaled)[:, 1]
@@ -83,6 +79,7 @@ def learn_ensemble_weights(
 
     total_weight = weights.sum()
 
+    # Fallback to uniform weighting if NNLS produces all zeros
     if total_weight == 0:
         normalized_weights = np.full(3, 1 / 3)
     else:

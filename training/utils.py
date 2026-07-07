@@ -23,6 +23,7 @@ from typing import Any
 
 import joblib
 import matplotlib.pyplot as plt
+from sklearn.calibration import CalibratedClassifierCV
 
 # ======================================================
 # Logging Configuration
@@ -119,6 +120,46 @@ def save_plot(output_dir: Path, filename: str) -> None:
     plt.tight_layout()
     plt.savefig(output_dir / filename)
     plt.close()
+
+
+# ======================================================
+# Model Introspection
+# ======================================================
+
+def unwrap_base_estimator(model: Any) -> Any:
+    """
+    Returns the underlying fitted estimator from a CalibratedClassifierCV,
+    or the model itself if it is not a calibrated wrapper.
+
+    CalibratedClassifierCV (fit with a cross-validation splitter rather
+    than cv="prefit") does not expose attributes like
+    `feature_importances_` directly, and tools such as SHAP's
+    TreeExplainer need a concrete tree model rather than the wrapper.
+    This helper reaches into the first fitted fold estimator so that
+    feature-importance and SHAP code can keep working unchanged
+    regardless of whether calibration is applied upstream.
+
+    Note: when the wrapper was fit with an internal cross-validation
+    splitter, each fold has its own fitted estimator; this returns the
+    first one as a representative model for interpretability purposes.
+    It is not meant to reconstruct a single "canonical" final model.
+
+    Args:
+        model:
+            A fitted estimator, potentially wrapped in
+            CalibratedClassifierCV.
+
+    Returns:
+        The underlying fitted estimator suitable for introspection.
+    """
+    if isinstance(model, CalibratedClassifierCV):
+        calibrated_fold = model.calibrated_classifiers_[0]
+        return getattr(
+            calibrated_fold,
+            "estimator",
+            getattr(calibrated_fold, "base_estimator", None),
+        )
+    return model
 
 
 # ======================================================

@@ -4,3 +4,4 @@ data/*.csv
 models/*
 !models/.gitkeep
 __pycache__/
+*.pyc

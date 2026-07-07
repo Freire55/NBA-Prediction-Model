@@ -197,7 +197,7 @@ def main() -> None:
     with PipelineStage(
         2,
         TOTAL_PIPELINE_STAGES,
-        "Hyperparameter tuning base models",
+        "Hyperparameter tuning & cross-validated calibration",
     ):
         (
             artifacts.mlp_model,
@@ -210,6 +210,8 @@ def main() -> None:
             config,
             output_dir,
         )
+        logger.info("      Base models successfully calibrated (Method: Sigmoid).")
+
 
     # ======================================================
     # Ensemble Learning

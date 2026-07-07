@@ -18,8 +18,14 @@ from typing import Any, Tuple
 import logging
 import numpy as np
 import pandas as pd
+from sklearn.base import clone
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import RandomizedSearchCV, TimeSeriesSplit
+from sklearn.model_selection import (
+    RandomizedSearchCV,
+    TimeSeriesSplit,
+    cross_val_score,
+)
 from sklearn.neural_network import MLPClassifier
 from xgboost import XGBClassifier
 
@@ -72,8 +78,8 @@ def tune_base_models(
 
     Returns:
         Tuple containing:
-            - Best MLP model
-            - Best XGBoost model
+            - Best MLP model, calibrated via sigmoid Platt scaling
+            - Best XGBoost model, calibrated via sigmoid Platt scaling
             - Trained Logistic Regression model
     """
     # --------------------------------------------------
@@ -127,6 +133,15 @@ def tune_base_models(
 
     mlp_search.fit(X_train_scaled, y_train)
     xgb_search.fit(X_train, y_train)
+
+    lr_cv_scores = cross_val_score(
+        lr_model,
+        X_train_scaled,
+        y_train,
+        cv=tscv,
+        scoring="neg_log_loss",
+        n_jobs=-1,
+    )
     lr_model.fit(X_train_scaled, y_train)
 
     logger.info(
@@ -135,6 +150,28 @@ def tune_base_models(
     logger.info(
         f"      Best XGBoost CV Log Loss: {-xgb_search.best_score_:.4f}"
     )
+    logger.info(
+        f"      Logistic Regression CV Log Loss: {-lr_cv_scores.mean():.4f}"
+    )
+
+    # --------------------------------------------------
+    # Probability calibration (Platt / sigmoid scaling)
+    # --------------------------------------------------
+
+
+    mlp_calibrated = CalibratedClassifierCV(
+        clone(mlp_search.best_estimator_),
+        method="sigmoid",
+        cv=tscv,
+    )
+    mlp_calibrated.fit(X_train_scaled, y_train)
+
+    xgb_calibrated = CalibratedClassifierCV(
+        clone(xgb_search.best_estimator_),
+        method="sigmoid",
+        cv=tscv,
+    )
+    xgb_calibrated.fit(X_train, y_train)
 
     # --------------------------------------------------
     # Save tuning artifacts
@@ -165,7 +202,7 @@ def tune_base_models(
     )
 
     return (
-        mlp_search.best_estimator_,
-        xgb_search.best_estimator_,
+        mlp_calibrated,
+        xgb_calibrated,
         lr_model,
     )

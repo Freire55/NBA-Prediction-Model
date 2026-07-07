@@ -22,7 +22,7 @@ from sklearn.inspection import permutation_importance
 
 from training.config import TrainingArtifacts
 from training.plots import plot_horizontal_bar
-from training.utils import save_plot
+from training.utils import save_plot, unwrap_base_estimator
 
 # ======================================================
 # Constants
@@ -92,11 +92,13 @@ def generate_xgb_importance(
     """
     logger.info("      Extracting XGBoost Tree Importance...")
 
+    xgb_raw = unwrap_base_estimator(artifacts.xgb_final)
+
     importance_df = (
         pd.DataFrame(
             {
                 "Feature": artifacts.features,
-                "Importance": artifacts.xgb_final.feature_importances_,
+                "Importance": xgb_raw.feature_importances_,
             }
         )
         .sort_values("Importance", ascending=False)
@@ -167,7 +169,7 @@ def generate_shap(
         random_state=artifacts.config.random_seed,
     )
 
-    explainer = shap.TreeExplainer(artifacts.xgb_final)
+    explainer = shap.TreeExplainer(unwrap_base_estimator(artifacts.xgb_final))
     shap_values = explainer.shap_values(X_explain)
 
     plt.figure(figsize=(10, 8))
