@@ -1,10 +1,5 @@
 # 🏀 NBA Game Outcome Prediction using Machine Learning
 
-![Python](https://img.shields.io/badge/Python-3.12-blue)
-![scikit-learn](https://img.shields.io/badge/scikit--learn-Latest-orange)
-![XGBoost](https://img.shields.io/badge/XGBoost-Latest-green)
-![License](https://img.shields.io/badge/License-MIT-yellow)
-
 Predicting professional basketball games is a challenging machine learning problem due to changing team strength, roster availability, schedule effects, and the inherently stochastic nature of sports.
 
 This project implements a fully chronological end-to-end machine learning pipeline that predicts NBA game outcomes using only information available **before tip-off**. The pipeline combines leak-free feature engineering, time-aware model selection, probability calibration, ensemble learning, and explainability techniques to produce realistic predictions on unseen NBA seasons.
