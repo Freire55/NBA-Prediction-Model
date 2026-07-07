@@ -3,3 +3,4 @@ data/*.csv
 *.csv
 models/*
 !models/.gitkeep
+__pycache__/
