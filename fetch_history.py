@@ -25,18 +25,22 @@ for year in range(2000, end_year + 1):
 all_games = []
 
 # Download each season
+max_retries = 3
 for season in seasons:
-    print(f"Fetching team data for the {season} season...")
-    try:
-        # Keep it to the regular season
-        game_log = leaguegamelog.LeagueGameLog(season=season, season_type_all_star='Regular Season')
-        df = game_log.get_data_frames()[0]
-        all_games.append(df)
-        
-        # Pause between calls
-        time.sleep(2)
-    except Exception as e:
-        print(f"Error fetching {season}: {e}")
+    print(f"Fetching {season}...")
+    
+    for attempt in range(max_retries):
+        try:
+            game_log = leaguegamelog.LeagueGameLog(season=season, season_type_all_star='Regular Season')
+            df = game_log.get_data_frames()[0]
+            all_games.append(df)
+            time.sleep(2)
+            break
+        except Exception as e:
+            print(f"Attempt {attempt + 1} failed for {season}: {e}")
+            time.sleep(5) 
+    else:
+        raise ConnectionError(f"Failed to fetch {season} after {max_retries} attempts.")
 
 # Save the combined file
 if all_games:

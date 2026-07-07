@@ -21,20 +21,22 @@ for year in range(2000, end_year + 1):
 all_player_logs = []
 
 # Download player logs
+max_retries = 3
 for season in seasons:
-    print(f"Fetching individual player game logs for {season}...")
-    try:
-        # Ask for player rows only
-        game_log = leaguegamelog.LeagueGameLog(
-            season=season, 
-            season_type_all_star='Regular Season',
-            player_or_team_abbreviation='P' 
-        )
-        df = game_log.get_data_frames()[0]
-        all_player_logs.append(df)
-        time.sleep(2)
-    except Exception as e:
-        print(f"Error fetching {season}: {e}")
+    print(f"Fetching {season}...")
+    
+    for attempt in range(max_retries):
+        try:
+            game_log = leaguegamelog.LeagueGameLog(season=season, season_type_all_star='Regular Season')
+            df = game_log.get_data_frames()[0]
+            all_player_logs.append(df)
+            time.sleep(2)
+            break 
+        except Exception as e:
+            print(f"Attempt {attempt + 1} failed for {season}: {e}")
+            time.sleep(5) 
+    else:
+        raise ConnectionError(f"Failed to fetch {season} after {max_retries} attempts.")
 
 if all_player_logs:
     master_logs_df = pd.concat(all_player_logs, ignore_index=True)

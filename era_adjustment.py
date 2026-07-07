@@ -1,28 +1,85 @@
-import pandas as pd
+"""
+Applies season-based era normalization to historical NBA statistics.
+
+This script converts numeric box score statistics into season-relative
+z-scores, allowing player and team performances to be compared fairly
+across different NBA eras. Each statistic is normalized independently
+within each season.
+
+Input:
+    data/raw_historical_nba.csv
+
+Output:
+    data/era_adjusted_nba.csv
+"""
+
 from pathlib import Path
+
+import pandas as pd
+
+# ======================================================
+# Constants & Configuration
+# ======================================================
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 
-# Load the box scores
+INPUT_FILE = "raw_historical_nba.csv"
+OUTPUT_FILE = "era_adjusted_nba.csv"
+
+EXCLUDED_COLUMNS = {
+    "SEASON_ID",
+    "TEAM_ID",
+    "GAME_ID",
+    "MIN",
+    "VIDEO_AVAILABLE",
+}
+
+DEFAULT_Z_SCORE = 0.0
+
+
+# ======================================================
+# Load Data
+# ======================================================
+
 try:
-    df = pd.read_csv(DATA_DIR / "raw_historical_nba.csv")
+    df = pd.read_csv(DATA_DIR / INPUT_FILE)
 except FileNotFoundError:
-    print("Error: 'raw_historical_nba.csv' not found. Run fetch_history.py first.")
-    exit()
+    raise FileNotFoundError(
+        f"'{INPUT_FILE}' not found. Run fetch_history.py first."
+    )
 
-# Leave ID columns out of the math
-exclude_cols = ['SEASON_ID', 'TEAM_ID', 'GAME_ID', 'MIN', 'VIDEO_AVAILABLE']
-stats_to_normalize = [col for col in df.select_dtypes(include='number').columns if col not in exclude_cols]
+# ======================================================
+# Era Adjustment
+# ======================================================
 
-for stat in stats_to_normalize:
-    if stat in df.columns:
-        z_col_name = f"Z_{stat}"
-        df[z_col_name] = df.groupby('SEASON_ID')[stat].transform(lambda x: (x - x.mean()) / x.std())
+# Identify numeric statistics that should be normalized.
+stats_to_normalize = [
+    column
+    for column in df.select_dtypes(include="number").columns
+    if column not in EXCLUDED_COLUMNS
+]
 
-# Fill missing z-scores with 0
-z_cols = [col for col in df.columns if col.startswith('Z_')]
-df[z_cols] = df[z_cols].fillna(0)
+# Compute season-relative z-scores for every statistic.
+z_scores = (
+    df.groupby("SEASON_ID")[stats_to_normalize]
+    .transform(lambda values: (values - values.mean()) / values.std())
+    .fillna(DEFAULT_Z_SCORE)
+)
 
-output_file = DATA_DIR / "era_adjusted_nba.csv"
-df.to_csv(output_file, index=False)
-print(f"Success! Era-adjusted data saved to '{output_file.name}'.")
+# Rename generated columns.
+z_scores.columns = [f"Z_{column}" for column in stats_to_normalize]
+
+# Append normalized statistics.
+df = pd.concat([df, z_scores], axis=1)
+
+# ======================================================
+# Save Output
+# ======================================================
+
+output_path = DATA_DIR / OUTPUT_FILE
+
+df.to_csv(output_path, index=False)
+
+print(
+    f"Successfully saved era-adjusted dataset to '{OUTPUT_FILE}'."
+)
