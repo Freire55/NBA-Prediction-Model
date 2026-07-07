@@ -123,10 +123,13 @@ def generate_lr_coefficients(
     """
     logger.info("      Extracting Logistic Regression Coefficients...")
 
+    # Unwrap the base estimator because it is now calibrated
+    lr_raw = unwrap_base_estimator(artifacts.lr_final)
+
     coefficients_df = pd.DataFrame(
         {
             "Feature": artifacts.features,
-            "Weight": artifacts.lr_final.coef_[0],
+            "Weight": lr_raw.coef_[0],
         }
     )
 

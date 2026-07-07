@@ -1,0 +1,10 @@
+{
+    "max_iter": 1000,
+    "learning_rate_init": 0.001,
+    "hidden_layer_sizes": [
+        64
+    ],
+    "batch_size": 32,
+    "alpha": 0.001,
+    "activation": "tanh"
+}

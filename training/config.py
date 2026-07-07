@@ -10,6 +10,7 @@ This module centralizes:
 - Experiment metadata generation
 """
 
+import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +22,30 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator
 from sklearn.preprocessing import StandardScaler
+
+
+# ======================================================
+# Universal JSON Serialization Patch
+# ======================================================
+
+class NumpyEncoder(json.JSONEncoder):
+    """Safely converts NumPy arrays and scalars to native Python types."""
+    def default(self, obj: Any) -> Any:
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, np.generic):
+            return obj.item()
+        return super().default(obj)
+
+_original_dump = json.dump
+
+def _patched_dump(obj, fp, *, cls=None, **kwargs):
+    """Overrides json.dump to use NumpyEncoder by default."""
+    if cls is None:
+        cls = NumpyEncoder
+    return _original_dump(obj, fp, cls=cls, **kwargs)
+
+json.dump = _patched_dump
 
 
 @dataclass
@@ -72,6 +97,7 @@ class TrainingConfig:
 
     mlp_search_iterations: int = 30
     xgb_search_iterations: int = 20
+    lr_search_iterations: int = 12
 
     # ======================================================
     # Hyperparameter Search Spaces
@@ -104,6 +130,13 @@ class TrainingConfig:
             "subsample": [0.7, 0.85, 1.0],
             "colsample_bytree": [0.7, 0.85, 1.0],
             "n_estimators": [100, 300, 500],
+        }
+    )
+
+    lr_grid: dict[str, Any] = field(
+        default_factory=lambda: {
+            "C": [0.001, 0.01, 0.1, 1.0, 10.0, 100.0],
+            "solver": ["lbfgs", "liblinear"],
         }
     )
 

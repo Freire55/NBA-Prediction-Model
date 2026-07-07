@@ -10,7 +10,9 @@ from typing import Any, Dict, Tuple
 
 import logging
 import numpy as np
-from scipy.optimize import nnls
+from scipy.optimize import minimize
+from sklearn.metrics import log_loss
+
 
 # ======================================================
 # Logging
@@ -69,22 +71,49 @@ def learn_ensemble_weights(
     xgb_probs = xgb_model.predict_proba(X_val)[:, 1]
     lr_probs = lr_model.predict_proba(X_val_scaled)[:, 1]
 
-    # Stack predictions for optimization
+# Stack predictions for optimization
     stacked_predictions = np.column_stack(
         (mlp_probs, xgb_probs, lr_probs)
     )
 
-    # Learn optimal non-negative weights
-    weights, _ = nnls(stacked_predictions, y_val)
+    # Define the Log Loss objective function
+    def objective(weights: np.ndarray) -> float:
+        blended_probs = np.dot(stacked_predictions, weights)
+        # Clip to prevent log(0) explosion
+        blended_probs = np.clip(blended_probs, 1e-15, 1 - 1e-15)
+        return log_loss(y_val, blended_probs)
 
-    total_weight = weights.sum()
+    # Constraint: Weights must sum to 1.0
+    constraints = {"type": "eq", "fun": lambda w: np.sum(w) - 1.0}
+    
+    # Bounds: Weights must be between 0.0 and 1.0
+    bounds = [(0.0, 1.0), (0.0, 1.0), (0.0, 1.0)]
+    
+    # Initial guess: Equal weighting
+    initial_guess = [1 / 3, 1 / 3, 1 / 3]
 
-    # Fallback to uniform weighting if NNLS produces all zeros
-    if total_weight == 0:
+    # Run the Sequential Least Squares Programming optimizer
+    result = minimize(
+        objective, 
+        initial_guess, 
+        method="SLSQP", 
+        bounds=bounds, 
+        constraints=constraints,
+        options={
+            "ftol": 1e-9,
+            "maxiter": 1000,
+        },
+    )
+
+    if not result.success:
+        logger.warning(
+            "      Ensemble optimization failed (%s). Using equal weights.",
+            result.message,
+        )
         normalized_weights = np.full(3, 1 / 3)
     else:
-        normalized_weights = weights / total_weight
-
+        normalized_weights = result.x
+    
     ensemble_formula = {
         "MLP": float(normalized_weights[0]),
         "XGBoost": float(normalized_weights[1]),

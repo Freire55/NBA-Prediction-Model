@@ -1,0 +1,6 @@
+{
+    "train_games": 22943,
+    "validation_games": 2139,
+    "test_games": 6140,
+    "feature_count": 31
+}

@@ -23,8 +23,8 @@ from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import (
     RandomizedSearchCV,
+    GridSearchCV,
     TimeSeriesSplit,
-    cross_val_score,
 )
 from sklearn.neural_network import MLPClassifier
 from xgboost import XGBClassifier
@@ -40,9 +40,11 @@ logger = logging.getLogger(__name__)
 
 MLP_PARAMS_FILE = "mlp_best_params.json"
 XGB_PARAMS_FILE = "xgb_best_params.json"
+LR_PARAMS_FILE = "lr_best_params.json"
 
 MLP_RESULTS_FILE = "mlp_cv_results.csv"
 XGB_RESULTS_FILE = "xgb_cv_results.csv"
+LR_RESULTS_FILE = "lr_cv_results.csv"
 
 
 # ======================================================
@@ -57,11 +59,11 @@ def tune_base_models(
     output_dir: Path,
 ) -> Tuple[Any, Any, Any]:
     """
-    Tunes the MLP and XGBoost classifiers using randomized
-    hyperparameter search with chronological cross-validation.
+    Tunes the MLP, XGBoost and Logistic Regression classifiers using
+    RandomizedSearchCV with chronological cross-validation.
 
-    Logistic Regression is trained using its default configuration
-    as a strong linear baseline.
+    The resulting best estimators are probability-calibrated using
+    CalibratedClassifierCV before being returned.
 
     Args:
         X_train_scaled:
@@ -77,10 +79,10 @@ def tune_base_models(
             Directory where tuning artifacts are saved.
 
     Returns:
-        Tuple containing:
-            - Best MLP model, calibrated via sigmoid Platt scaling
-            - Best XGBoost model, calibrated via sigmoid Platt scaling
-            - Trained Logistic Regression model
+    Tuple containing:
+        - Calibrated MLP classifier
+        - Calibrated XGBoost classifier
+        - Calibrated Logistic Regression classifier
     """
     # --------------------------------------------------
     # Time-series cross-validation
@@ -122,10 +124,17 @@ def tune_base_models(
         n_jobs=-1,
     )
 
-    lr_model = LogisticRegression(
+
+    lr_search = GridSearchCV(
+    estimator=LogisticRegression(
         max_iter=1000,
         random_state=config.random_seed,
-    )
+    ),
+    param_grid=config.lr_grid,
+    cv=tscv,
+    scoring="neg_log_loss",
+    n_jobs=-1,
+)
 
     # --------------------------------------------------
     # Model training
@@ -133,16 +142,8 @@ def tune_base_models(
 
     mlp_search.fit(X_train_scaled, y_train)
     xgb_search.fit(X_train, y_train)
+    lr_search.fit(X_train_scaled, y_train)
 
-    lr_cv_scores = cross_val_score(
-        lr_model,
-        X_train_scaled,
-        y_train,
-        cv=tscv,
-        scoring="neg_log_loss",
-        n_jobs=-1,
-    )
-    lr_model.fit(X_train_scaled, y_train)
 
     logger.info(
         f"      Best MLP CV Log Loss: {-mlp_search.best_score_:.4f}"
@@ -151,7 +152,7 @@ def tune_base_models(
         f"      Best XGBoost CV Log Loss: {-xgb_search.best_score_:.4f}"
     )
     logger.info(
-        f"      Logistic Regression CV Log Loss: {-lr_cv_scores.mean():.4f}"
+        f"      Best Logistic Regression CV Log Loss: {-lr_search.best_score_:.4f}"
     )
 
     # --------------------------------------------------
@@ -173,6 +174,13 @@ def tune_base_models(
     )
     xgb_calibrated.fit(X_train, y_train)
 
+    lr_calibrated = CalibratedClassifierCV(
+        clone(lr_search.best_estimator_),
+        method="sigmoid",
+        cv=tscv,
+    )
+    lr_calibrated.fit(X_train_scaled, y_train)
+
     # --------------------------------------------------
     # Save tuning artifacts
     # --------------------------------------------------
@@ -185,6 +193,11 @@ def tune_base_models(
     save_json(
         xgb_search.best_params_,
         output_dir / XGB_PARAMS_FILE,
+    )
+
+    save_json(
+        lr_search.best_params_,
+        output_dir / LR_PARAMS_FILE,
     )
 
     pd.DataFrame(
@@ -201,8 +214,15 @@ def tune_base_models(
         index=False,
     )
 
+    pd.DataFrame(
+        lr_search.cv_results_
+    ).to_csv(
+        output_dir / LR_RESULTS_FILE,
+        index=False,
+    )
+
     return (
         mlp_calibrated,
         xgb_calibrated,
-        lr_model,
+        lr_calibrated,
     )
