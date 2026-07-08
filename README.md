@@ -1,52 +1,56 @@
 # 🏀 NBA Game Outcome Prediction using Machine Learning
 
-Predicting professional basketball games is a challenging machine learning problem due to changing team strength, roster availability, schedule effects, and the inherently stochastic nature of sports.
+A fully chronological, leak-free machine learning pipeline for predicting NBA game outcomes using historical team and player statistics.
 
-This project implements a fully chronological end-to-end machine learning pipeline that predicts NBA game outcomes using only information available **before tip-off**. The pipeline combines leak-free feature engineering, time-aware model selection, probability calibration, ensemble learning, and explainability techniques to produce realistic predictions on unseen NBA seasons.
+This project predicts NBA regular-season games using only information that would have been available **before tip-off**. It combines advanced feature engineering, player representation learning, time-aware model selection, probability calibration, ensemble learning, and explainability into a reproducible end-to-end machine learning workflow.
 
-Rather than maximizing raw accuracy alone, the project emphasizes **sound machine learning engineering practices**, including chronological validation, reproducibility, calibrated probability estimation, and model interpretability.
+Rather than chasing raw accuracy through aggressive feature selection or data leakage, the project focuses on building a realistic prediction system that follows sound machine learning engineering practices and mirrors how a model would operate in production.
 
 ---
 
 # 📈 Results
 
-| Metric | Value |
-|---------|------:|
-| **Accuracy** | **66.0%** |
-| **Log Loss** | **0.617** |
-| **Brier Score** | **0.214** |
-| **ROC-AUC** | **0.710** |
+Final evaluation was performed on **every NBA regular-season game from 2021 onward**, using models trained exclusively on historical seasons.
 
-Final evaluation was performed on **every regular season game from 2021 onward**, using models trained exclusively on historical seasons.
+| Metric          |  Ensemble |
+| --------------- | --------: |
+| **Accuracy**    | **66.1%** |
+| **Log Loss**    | **0.615** |
+| **Brier Score** | **0.213** |
+| **ROC-AUC**     | **0.716** |
+
+The final ensemble combines calibrated Logistic Regression, XGBoost and Multi-Layer Perceptron (MLP) models using validation-set optimization.
 
 ---
 
-# ✨ Key Features
+# ✨ Highlights
 
-- 🔒 Leak-free feature engineering
-- 🏀 Team and player-level rolling statistics
-- 🏆 Continuous Elo rating system
-- 📈 Era-normalized statistics
-- 🧠 Logistic Regression, Neural Network (MLP) and XGBoost
-- ⚙️ Time-aware hyperparameter optimization
-- 📊 Cross-validated probability calibration
-- ⚖️ Validation-based weighted ensemble
-- 🔍 SHAP, permutation importance and coefficient analysis
-- 💾 Automatic experiment tracking and model serialization
+* 🔒 Fully leak-free chronological pipeline
+* 🏀 Team and player-level feature engineering
+* 👤 Learned player embeddings via PCA
+* 📈 Era-adjusted statistical normalization
+* 🏆 Continuous Elo rating system
+* 🧠 Logistic Regression, XGBoost and Neural Networks
+* ⚙️ Time-aware hyperparameter optimization
+* 📊 Cross-validated probability calibration
+* ⚖️ Validation-optimized ensemble learning
+* 🔍 SHAP, permutation importance and coefficient analysis
+* 📦 Automatic experiment tracking and model serialization
+* 🧪 Ablation studies validating learned player representations
 
 ---
 
 # 🚀 Motivation
 
-Sports prediction is one of the most difficult supervised learning problems because outcomes depend on numerous dynamic factors that evolve throughout a season.
+Predicting professional basketball games is an exceptionally difficult supervised learning problem.
 
-Many public NBA prediction projects unintentionally introduce target leakage by allowing future information into training features or evaluation.
+Team strength changes continuously due to injuries, roster moves, player development, scheduling effects, fatigue, and countless stochastic factors. Many publicly available NBA prediction projects unintentionally introduce target leakage through improper feature engineering or random train/test splits, leading to unrealistic performance estimates.
 
-This project was built around one guiding principle:
+This project was built around one fundamental principle:
 
-> **Every prediction must be generated using only information that would have been available before the game began.**
+> **Every prediction must be generated using only information that existed before the game began.**
 
-The objective is to demonstrate robust machine learning engineering practices rather than simply maximizing predictive accuracy.
+The objective is not only to produce competitive predictions, but to demonstrate rigorous machine learning engineering practices.
 
 ---
 
@@ -62,7 +66,13 @@ Historical Team & Player Data
 Era Normalization
         │
         ▼
-Leak-Free Feature Engineering
+Leak-Free Team Features
+        │
+        ▼
+Leak-Free Player Features
+        │
+        ▼
+Player Representation Learning (PCA)
         │
         ▼
 Chronological Train / Validation / Test Split
@@ -96,7 +106,8 @@ nba-prediction-model/
 
 ├── data/
 │   ├── raw datasets
-│   └── processed datasets
+│   ├── processed datasets
+│   └── generated player embeddings
 │
 ├── training/
 │   ├── config.py
@@ -109,11 +120,12 @@ nba-prediction-model/
 │   ├── plots.py
 │   └── utils.py
 │
-├── feature_engineering.py
-├── feature_engineering_players.py
-├── era_adjustment.py
 ├── fetch_history.py
 ├── fetch_player_game_logs.py
+├── era_adjustment.py
+├── feature_engineering.py
+├── generate_player_embeddings.py
+├── feature_engineering_players.py
 ├── train_models.py
 └── README.md
 ```
@@ -122,38 +134,72 @@ nba-prediction-model/
 
 # 📊 Dataset
 
-Historical data is collected directly from the official **NBA Stats API (`nba_api`)**.
+Historical data is collected directly from the official NBA Stats API using `nba_api`.
 
 The dataset contains every NBA regular-season game from **2000 onward**, including:
 
-- Team box scores
-- Player box scores
-- Matchups
-- Game dates
-- Team statistics
+* Team box scores
+* Player box scores
+* Game dates
+* Matchups
+* Team identifiers
+* Player identifiers
 
-No betting odds, proprietary datasets, or manually curated information are used.
+No betting odds, proprietary datasets or manually curated information are used.
 
 ---
 
 # 🧠 Feature Engineering
 
-Every feature is computed exclusively from information available before each game.
+Every feature is computed exclusively from historical information available before each game.
 
 The feature set includes:
 
-- Continuous Elo ratings
-- Rolling team statistics
-- Rolling offensive and defensive ratings
-- Era-normalized (Z-score) statistics
-- Rest advantage
-- Back-to-back indicators
-- Road trip length
-- Player Game Score
-- Active roster strength
-- Expected player impact
+### Team Features
 
-All rolling statistics are shifted so the current game is never included, eliminating target leakage.
+* Continuous Elo ratings
+* Rolling offensive and defensive ratings
+* Rolling shooting efficiency
+* Rolling rebounding statistics
+* Rolling turnover statistics
+* Rolling pace
+* Schedule density
+* Back-to-back indicators
+* Road trip length
+* Rest advantage
+* Era-normalized statistics
+
+### Player Features
+
+* Leak-free rolling Game Score
+* Rolling expected playing time
+* Active roster strength
+* Roster consistency
+* Star-player concentration
+* Expected player impact
+
+All rolling statistics are shifted so that the current game is never included.
+
+---
+
+# 👤 Player Representation Learning
+
+Instead of representing players only through aggregate box-score statistics, the project learns compact player representations using dimensionality reduction.
+
+For every player:
+
+* Fourteen per-minute statistical rates are calculated.
+* Historical exponentially weighted moving averages (EWMA) summarize recent performance.
+* Principal Component Analysis (PCA), trained exclusively on historical training seasons, compresses these profiles into two latent embedding dimensions.
+
+The embeddings are:
+
+* generated without future information,
+* weighted by expected historical playing time,
+* aggregated to the team level,
+* transformed into matchup-level embedding features.
+
+A dedicated ablation study demonstrated that these learned player representations consistently improve neural network performance while passing shuffle tests designed to detect data leakage.
 
 ---
 
@@ -161,107 +207,113 @@ All rolling statistics are shifted so the current game is never included, elimin
 
 Three independent classifiers are trained:
 
-- Logistic Regression
-- Multi-Layer Perceptron (MLP)
-- XGBoost
+* Logistic Regression
+* XGBoost
+* Multi-Layer Perceptron (MLP)
 
 Hyperparameters are optimized using **RandomizedSearchCV** with **TimeSeriesSplit**, ensuring every validation fold occurs strictly after its corresponding training data.
 
-All models are probability-calibrated before ensemble optimization.
+All models are subsequently calibrated using cross-validated Platt Scaling before ensemble optimization.
 
 ---
 
 # ⚖️ Ensemble Learning
 
-Instead of averaging model predictions equally, validation-set probabilities are combined using a constrained optimization procedure that directly minimizes **Log Loss** while enforcing non-negative weights that sum to one.
+Instead of averaging predictions equally, the final ensemble learns optimal model weights by minimizing validation Log Loss under the constraints that weights remain non-negative and sum to one.
 
-For the final model, the learned ensemble assigned approximately:
+The final learned ensemble is approximately:
 
-| Model | Weight |
-|--------|-------:|
-| Logistic Regression | **67%** |
-| MLP | 29% |
-| XGBoost | 4% |
+| Model               |    Weight |
+| ------------------- | --------: |
+| **MLP**             | **71.5%** |
+| XGBoost             |     24.9% |
+| Logistic Regression |      3.6% |
+
+This weighting reflects the complementary strengths of each calibrated model rather than assigning equal importance.
 
 ---
 
-# 📈 Model Comparison
+# 📊 Model Performance
 
-Although Neural Networks and Gradient Boosted Trees are often expected to outperform linear models, the opposite occurred in this project.
+A chronological ablation study showed that learned player embeddings provide a meaningful improvement over traditional engineered statistics alone.
 
-After hyperparameter optimization, probability calibration, and ensemble learning, **Logistic Regression consistently achieved the strongest overall performance**.
+The project also demonstrated that:
 
-This suggests that the engineered features capture most of the predictive signal in a largely linear manner, while more flexible models primarily learn additional noise.
-
-An important takeaway from this project is:
-
-> **Strong feature engineering can be more valuable than increasing model complexity.**
+* Carefully engineered statistical features produce a strong linear baseline.
+* Learned player representations allow neural networks to capture nonlinear roster interactions beyond conventional box-score aggregates.
+* Probability calibration and validation-based ensemble optimization further improve predictive performance.
 
 ---
 
 # 🔍 Explainability
 
-The pipeline automatically generates multiple explainability reports:
+Every training run automatically generates explainability reports including:
 
-- SHAP summary plots (XGBoost)
-- Permutation importance (MLP)
-- Logistic Regression coefficients
-- ROC curve
-- Calibration curve
-- Confusion matrix
-- Combined feature rankings
+* SHAP summary plots
+* Permutation importance
+* Logistic Regression coefficients
+* XGBoost feature importance
+* ROC curve
+* Calibration curve
+* Confusion matrix
+* Combined feature rankings
 
-These reports help explain both global feature importance and individual model behaviour.
+These artifacts help explain both global feature importance and individual model behaviour.
 
 ---
 
 # 📈 Evaluation Strategy
 
-The dataset is split chronologically.
+The dataset is split strictly chronologically.
 
-| Dataset | Seasons |
-|----------|----------|
-| Training | 2000–2018 |
-| Validation | 2019–2020 |
-| Testing | 2021–Present |
+| Dataset    | Seasons      |
+| ---------- | ------------ |
+| Training   | 2000–2018    |
+| Validation | 2019–2020    |
+| Testing    | 2021–Present |
 
-The test set is never used during feature engineering, hyperparameter tuning, ensemble optimization, or model calibration.
+The validation and test seasons are never used during feature engineering, PCA fitting, hyperparameter optimization, probability calibration or ensemble learning.
 
-This evaluation protocol closely mirrors how the model would perform in a real deployment.
+This evaluation protocol closely mirrors real-world deployment.
 
 ---
 
 # 🔒 Preventing Target Leakage
 
-Every stage of the pipeline was explicitly designed to avoid future information leaking into model training.
+Preventing target leakage is a central design goal of this project.
 
-Examples include:
+Leakage prevention includes:
 
-- Shifted rolling windows
-- Pre-game Elo ratings
-- Rolling player statistics
-- Chronological train/validation/test split
-- TimeSeriesSplit cross-validation
+* Shifted rolling windows
+* Historical Elo ratings
+* Historical player statistics
+* Leak-free EWMA player profiles
+* PCA fitted exclusively on training seasons
+* Chronological train/validation/test splits
+* TimeSeriesSplit cross-validation
+* Validation-only ensemble optimization
 
-As a result, every prediction reflects only information that would have been available before tip-off.
+Every prediction is generated using only information that would have been known before tip-off.
 
 ---
 
 # 📦 Generated Artifacts
 
-Each training run automatically produces a timestamped experiment folder containing:
+Each training run automatically creates a timestamped experiment directory containing:
 
-- Trained models
-- Feature scaler
-- Learned ensemble weights
-- Hyperparameter search results
-- Evaluation metrics
-- Feature importance rankings
-- SHAP visualizations
-- Calibration curve
-- ROC curve
-- Confusion matrix
-- Training logs
+* Trained models
+* Feature scaler
+* PCA embeddings
+* Calibration models
+* Learned ensemble weights
+* Hyperparameter search results
+* Evaluation metrics
+* Feature importance rankings
+* SHAP visualizations
+* ROC curve
+* Calibration curve
+* Confusion matrix
+* Training logs
 
 Every experiment is fully reproducible.
 
@@ -269,35 +321,37 @@ Every experiment is fully reproducible.
 
 # 🛠 Technologies
 
-- Python
-- Pandas
-- NumPy
-- Scikit-learn
-- XGBoost
-- SHAP
-- SciPy
-- Matplotlib
-- Joblib
-- nba_api
+* Python
+* Pandas
+* NumPy
+* Scikit-learn
+* XGBoost
+* SHAP
+* SciPy
+* Matplotlib
+* Joblib
+* nba_api
 
 ---
 
-# 🚀 Future Improvements
+# 🔬 Future Work
 
 Potential future extensions include:
 
-- Stacking ensembles
-- Bayesian hyperparameter optimization
-- Injury report integration
-- Starting lineup projections
-- Travel distance modelling
-- Daily automated prediction pipeline
-- Interactive Streamlit dashboard
+* Learned neural player embeddings (Autoencoders)
+* Graph Neural Networks for roster interactions
+* CatBoost and LightGBM comparisons
+* Bayesian hyperparameter optimization
+* Injury report integration
+* Starting lineup projections
+* Travel distance modelling
+* Automated daily prediction pipeline
+* Interactive Streamlit dashboard
 
 ---
 
 # 👨‍💻 Author
 
-Developed as a personal machine learning project exploring predictive sports analytics while applying modern machine learning engineering practices.
+Developed as a personal machine learning engineering project exploring predictive sports analytics through reproducible experimentation, rigorous evaluation and modern ML practices.
 
-The project emphasizes reproducibility, chronological evaluation, explainability, and clean software architecture as much as predictive performance.
+The project emphasizes chronological evaluation, leak-free feature engineering, probability calibration, explainability and reproducible experimentation as much as predictive performance.

@@ -1,7 +1,17 @@
 {
     "train_end": "22018",
     "validation_end": "22020",
-    "feature_prefix": "DELTA_",
+    "lr_prefixes": [
+        "DELTA_"
+    ],
+    "xgb_prefixes": [
+        "HOME_",
+        "AWAY_"
+    ],
+    "mlp_prefixes": [
+        "DELTA_",
+        "EMBED_DELTA_"
+    ],
     "extra_features": [
         "REST_ADVANTAGE",
         "HOME_B2B",

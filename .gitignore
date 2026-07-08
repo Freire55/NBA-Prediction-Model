@@ -6,14 +6,12 @@ __pycache__/
 
 models/**/*.pkl
 
-models/**/training.log
-
 models/**/*_cv_results.csv
 
 models/run_*
 
 data
 
-progress.md
-
 .pytest_cache/
+
+Progress.md

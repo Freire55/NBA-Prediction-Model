@@ -1,0 +1,62 @@
+[2026-07-08 17:13:09] INFO: 
+=========================================
+[2026-07-08 17:13:09] INFO:       NBA PREDICTION TRAINING PIPELINE   
+[2026-07-08 17:13:09] INFO: =========================================
+
+[2026-07-08 17:13:09] INFO: [1/6] Data preparation & scaling
+[2026-07-08 17:13:10] INFO:       Train: 22943 | Val: 2139 | Test: 6140
+[2026-07-08 17:13:10] INFO:       Features -> LR: 32 | XGB: 45 | MLP: 34
+[2026-07-08 17:13:10] INFO:   ✔ completed in 0s
+
+[2026-07-08 17:13:10] INFO: [2/6] Hyperparameter tuning & cross-validated calibration
+[2026-07-08 17:16:16] INFO:       Best MLP CV Log Loss: 0.5981
+[2026-07-08 17:16:16] INFO:       Best XGBoost CV Log Loss: 0.6061
+[2026-07-08 17:16:16] INFO:       Best Logistic Regression CV Log Loss: 0.6006
+[2026-07-08 17:16:16] INFO:       Applying cross-validated calibration to base models...
+[2026-07-08 17:16:46] INFO:       Base models successfully calibrated (Method: Sigmoid).
+[2026-07-08 17:16:46] INFO:   ✔ completed in 3m 36s
+
+[2026-07-08 17:16:46] INFO: [3/6] Learning ensemble weighting
+[2026-07-08 17:16:46] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-07-08 17:16:47] INFO:       Learned Formula: (0.715 * MLP) + (0.249 * XGB) + (0.036 * LR)
+[2026-07-08 17:16:47] INFO:   ✔ completed in 0s
+
+[2026-07-08 17:16:47] INFO: [4/6] Retraining on full historical data
+[2026-07-08 17:17:17] INFO:   ✔ completed in 30s
+
+[2026-07-08 17:17:17] INFO: [5/6] Generating SHAP & feature importances
+[2026-07-08 17:17:17] INFO:       Evaluating MLP Permutation Importance...
+[2026-07-08 17:17:21] INFO:       Extracting XGBoost Tree Importance...
+[2026-07-08 17:17:21] INFO:       Extracting Logistic Regression Coefficients...
+[2026-07-08 17:17:22] INFO:       Generating SHAP explanations for XGBoost...
+[2026-07-08 17:17:23] INFO:   ✔ completed in 5s
+
+[2026-07-08 17:17:23] INFO: [6/6] Final evaluation & plotting
+[2026-07-08 17:17:23] INFO: 
+      Final Evaluation Metrics:
+[2026-07-08 17:17:23] INFO:       Model                Acc      LogLoss    Brier    ROC-AUC 
+[2026-07-08 17:17:23] INFO:       ────────────────────────────────────────────────────────────
+[2026-07-08 17:17:23] INFO:       MLP                  65.9     0.616      0.214    0.713   
+[2026-07-08 17:17:23] INFO:       XGBoost              65.8     0.622      0.216    0.708   
+[2026-07-08 17:17:23] INFO:       Logistic Regression  66.1     0.617      0.214    0.711   
+[2026-07-08 17:17:23] INFO:       Ensemble             66.1     0.615      0.213    0.716   
+[2026-07-08 17:17:23] INFO: 
+[2026-07-08 17:17:24] INFO:   ✔ completed in 1s
+
+[2026-07-08 17:17:24] INFO: =========================================
+[2026-07-08 17:17:24] INFO:           TRAINING COMPLETE              
+[2026-07-08 17:17:24] INFO: =========================================
+
+[2026-07-08 17:17:24] INFO: Artifacts Generated in: models/run_2026-07-08_17-13-09/
+[2026-07-08 17:17:24] INFO:   ✔ Models (.pkl)
+[2026-07-08 17:17:24] INFO:   ✔ Metrics & Configurations (.json)
+[2026-07-08 17:17:24] INFO:   ✔ Feature Rankings (.csv)
+[2026-07-08 17:17:24] INFO:   ✔ training.log
+[2026-07-08 17:17:24] INFO:   ✔ 01_model_comparison.csv
+[2026-07-08 17:17:24] INFO:   ✔ 02_calibration_curve.png
+[2026-07-08 17:17:24] INFO:   ✔ 03_roc_curve.png
+[2026-07-08 17:17:24] INFO:   ✔ 04_confusion_matrix.png
+[2026-07-08 17:17:24] INFO:   ✔ 05_xgb_feature_importance.png
+[2026-07-08 17:17:24] INFO:   ✔ 06_mlp_feature_importance.png
+[2026-07-08 17:17:24] INFO:   ✔ 07_lr_coefficients.png
+[2026-07-08 17:17:24] INFO:   ✔ 08_xgb_shap_summary.png
