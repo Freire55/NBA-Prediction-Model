@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 from sklearn.base import clone
 from sklearn.preprocessing import StandardScaler
+from training.config import FeatureSet, TrainingArtifacts
 
 # ======================================================
 # Output Files
@@ -31,23 +32,8 @@ SCALER_STATS_FILE = "scaler_statistics.csv"
 # ======================================================
 
 def retrain_on_full_data(
-    X_train: pd.DataFrame,
-    X_val: pd.DataFrame,
-    y_train: pd.Series,
-    y_val: pd.Series,
-    X_test: pd.DataFrame,
-    mlp_model: Any,
-    xgb_model: Any,
-    lr_model: Any,
-    output_dir: Path,
-) -> Tuple[
-    Any,
-    Any,
-    Any,
-    StandardScaler,
-    pd.DataFrame,
-    np.ndarray,
-]:
+    artifacts: TrainingArtifacts,
+) -> None:
     """
     Retrains the selected models on the full historical dataset.
 
@@ -56,50 +42,57 @@ def retrain_on_full_data(
     dataset to avoid wasting available information, and scaler
     statistics are exported for reproducibility.
 
-    Args:
-        X_train:
-            Training feature matrix.
-        X_val:
-            Validation feature matrix.
-        y_train:
-            Training labels.
-        y_val:
-            Validation labels.
-        X_test:
-            Test feature matrix.
-        mlp_model:
-            Tuned MLP model.
-        xgb_model:
-            Tuned XGBoost model.
-        lr_model:
-            Tuned Logistic Regression model.
-        output_dir:
-            Directory where training artifacts are saved.
+    This function mutates `artifacts` in place: it populates
+    `final_model` on each of `artifacts.mlp`, `artifacts.xgb`, and
+    `artifacts.lr`, and refreshes each model's `feature_set` with the
+    scaler and combined train+val data fit on the full dataset, so
+    that downstream stages (explainability, evaluation) see final,
+    fully-trained models rather than the dataclass defaults.
 
-    Returns:
-        Tuple containing:
-            - Final MLP model
-            - Final XGBoost model
-            - Final Logistic Regression model
-            - StandardScaler fitted on the combined dataset
-            - Combined training feature matrix
-            - Scaled test feature matrix
+    Args:
+        artifacts:
+            The central pipeline state, including tuned (but not yet
+            finally-retrained) models under `.model` for each of
+            `mlp`, `xgb`, and `lr`.
     """
     # --------------------------------------------------
     # Combine training and validation datasets
     # --------------------------------------------------
 
-    X_train_full = pd.concat([X_train, X_val])
-    y_train_full = pd.concat([y_train, y_val])
+    data = artifacts.data
+
+    mlp_train_full = pd.concat([
+        data.mlp.X_train,
+        data.mlp.X_val,
+    ])
+
+    xgb_train_full = pd.concat([
+        data.xgb.X_train,
+        data.xgb.X_val,
+    ])
+
+    lr_train_full = pd.concat([
+        data.lr.X_train,
+        data.lr.X_val,
+    ])
+
+    y_train_full = pd.concat([
+        data.y_train,
+        data.y_val,
+    ])
+
 
     # --------------------------------------------------
-    # Fit scaler on the complete training dataset
+    # Fit scalers on the complete datasets
     # --------------------------------------------------
 
-    scaler_full = StandardScaler()
+    mlp_scaler = StandardScaler()
+    mlp_train_full_scaled = mlp_scaler.fit_transform(mlp_train_full)
+    mlp_test_scaled = mlp_scaler.transform(data.mlp.X_test)
 
-    X_train_full_scaled = scaler_full.fit_transform(X_train_full)
-    X_test_scaled_full = scaler_full.transform(X_test)
+    lr_scaler = StandardScaler()
+    lr_train_full_scaled = lr_scaler.fit_transform(lr_train_full)
+    lr_test_scaled = lr_scaler.transform(data.lr.X_test)
 
     # --------------------------------------------------
     # Export scaler statistics
@@ -107,14 +100,14 @@ def retrain_on_full_data(
 
     scaler_stats = pd.DataFrame(
         {
-            "Feature": X_train_full.columns,
-            "Mean": scaler_full.mean_,
-            "Std": scaler_full.scale_,
+            "Feature": lr_train_full.columns,
+            "Mean": lr_scaler.mean_,
+            "Std": lr_scaler.scale_,
         }
     )
 
     scaler_stats.to_csv(
-        output_dir / SCALER_STATS_FILE,
+        artifacts.output_dir / SCALER_STATS_FILE,
         index=False,
     )
 
@@ -122,19 +115,32 @@ def retrain_on_full_data(
     # Clone tuned models and retrain
     # --------------------------------------------------
 
-    mlp_final = clone(mlp_model)
-    xgb_final = clone(xgb_model)
-    lr_final = clone(lr_model)
+    mlp_final = clone(artifacts.mlp.model)
+    xgb_final = clone(artifacts.xgb.model)
+    lr_final = clone(artifacts.lr.model)
 
-    mlp_final.fit(X_train_full_scaled, y_train_full)
-    xgb_final.fit(X_train_full, y_train_full)
-    lr_final.fit(X_train_full_scaled, y_train_full)
+    mlp_final.fit(mlp_train_full_scaled, y_train_full)
+    xgb_final.fit(xgb_train_full, y_train_full)
+    lr_final.fit(lr_train_full_scaled, y_train_full)
 
-    return (
-        mlp_final,
-        xgb_final,
-        lr_final,
-        scaler_full,
-        X_train_full,
-        X_test_scaled_full,
-    )
+    # --------------------------------------------------
+    # Write results back onto artifacts
+    # --------------------------------------------------
+
+    artifacts.mlp.final_model = mlp_final
+    artifacts.xgb.final_model = xgb_final
+    artifacts.lr.final_model = lr_final
+
+    artifacts.mlp.feature_set.scaler = mlp_scaler
+    artifacts.lr.feature_set.scaler = lr_scaler
+
+    artifacts.mlp.feature_set.X_test_processed = mlp_test_scaled
+    artifacts.lr.feature_set.X_test_processed = lr_test_scaled
+
+    artifacts.mlp.feature_set.X_train_full = mlp_train_full
+    artifacts.mlp.feature_set.X_train_full_processed = mlp_train_full_scaled
+
+    artifacts.xgb.feature_set.X_train_full = xgb_train_full
+
+    artifacts.lr.feature_set.X_train_full = lr_train_full
+    artifacts.lr.feature_set.X_train_full_processed = lr_train_full_scaled

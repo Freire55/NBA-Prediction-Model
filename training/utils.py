@@ -25,6 +25,8 @@ import joblib
 import matplotlib.pyplot as plt
 from sklearn.calibration import CalibratedClassifierCV
 
+from training.config import NumpyEncoder
+
 # ======================================================
 # Logging Configuration
 # ======================================================
@@ -81,17 +83,9 @@ def setup_logger(output_dir: Path) -> logging.Logger:
 
 
 def save_json(data: dict, filepath: Path) -> None:
-    """
-    Saves a dictionary as a formatted JSON file.
-
-    Args:
-        data:
-            Dictionary to serialize.
-        filepath:
-            Destination file.
-    """
+    """Saves a dictionary as a formatted JSON file."""
     with open(filepath, "w") as file:
-        json.dump(data, file, indent=4)
+        json.dump(data, file, cls=NumpyEncoder, indent=4)
 
 
 def save_joblib(obj: Any, filepath: Path) -> None:
@@ -123,7 +117,7 @@ def save_plot(output_dir: Path, filename: str) -> None:
 
 
 # ======================================================
-# Model Introspection
+# Model Utilities
 # ======================================================
 
 def unwrap_base_estimator(model: Any) -> Any:

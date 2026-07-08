@@ -11,11 +11,11 @@ This module centralizes:
 """
 
 import json
+import platform
+import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-import platform
-import sys
 from typing import Any
 
 import numpy as np
@@ -25,7 +25,7 @@ from sklearn.preprocessing import StandardScaler
 
 
 # ======================================================
-# Universal JSON Serialization Patch
+# Universal JSON Serialization
 # ======================================================
 
 class NumpyEncoder(json.JSONEncoder):
@@ -37,16 +37,60 @@ class NumpyEncoder(json.JSONEncoder):
             return obj.item()
         return super().default(obj)
 
-_original_dump = json.dump
 
-def _patched_dump(obj, fp, *, cls=None, **kwargs):
-    """Overrides json.dump to use NumpyEncoder by default."""
-    if cls is None:
-        cls = NumpyEncoder
-    return _original_dump(obj, fp, cls=cls, **kwargs)
+# ======================================================
+# Dataset Containers
+# ======================================================
 
-json.dump = _patched_dump
+@dataclass
+class DatasetSummary:
+    """Strongly typed summary metrics for the prepared dataset."""
+    train_games: int
+    validation_games: int
+    test_games: int
+    
+    lr_feature_names: list[str]
+    xgb_feature_names: list[str]
+    mlp_feature_names: list[str]
 
+
+@dataclass
+class FeatureSet:
+    """Container for a model's specific dataset representation."""
+    X_train: pd.DataFrame
+    X_val: pd.DataFrame
+    X_test: pd.DataFrame
+
+    X_train_full: pd.DataFrame | None = None
+
+    X_train_processed: np.ndarray | None = None
+    X_val_processed: np.ndarray | None = None
+    X_test_processed: np.ndarray | None = None
+
+    X_train_full_processed: np.ndarray | None = None
+
+    scaler: StandardScaler | None = None
+
+    feature_names: list[str] | None = None
+
+
+@dataclass
+class TrainingData:
+    """Return payload from the data preparation stage."""
+    mlp: FeatureSet
+    xgb: FeatureSet
+    lr: FeatureSet
+
+    y_train: pd.Series
+    y_val: pd.Series
+    y_test: pd.Series
+
+    summary: DatasetSummary
+
+
+# ======================================================
+# Configurations
+# ======================================================
 
 @dataclass
 class TrainingConfig:
@@ -62,10 +106,20 @@ class TrainingConfig:
     validation_end: str = "22020"
 
     # ======================================================
-    # Feature Configuration
+    # Feature Configuration (Heterogeneous)
     # ======================================================
 
-    feature_prefix: str = "DELTA_"
+    lr_prefixes: list[str] = field(
+        default_factory=lambda: ["DELTA_"]
+    )
+    
+    xgb_prefixes: list[str] = field(
+        default_factory=lambda: ["HOME_", "AWAY_"]
+    )
+    
+    mlp_prefixes: list[str] = field(
+        default_factory=lambda: ["DELTA_", "EMBED_DELTA_"]
+    )
 
     extra_features: list[str] = field(
         default_factory=lambda: [
@@ -145,75 +199,42 @@ class TrainingConfig:
         return asdict(self)
 
 
+# ======================================================
+# Artifact Containers
+# ======================================================
+
+@dataclass
+class ModelArtifacts:
+    """Groups all artifacts specific to a single model architecture."""
+    feature_set: FeatureSet | None = None
+
+    model: BaseEstimator | None = None
+    final_model: BaseEstimator | None = None
+
+
 @dataclass
 class TrainingArtifacts:
     """
-    Stores datasets, trained models, scalers, and intermediate
-    artifacts produced throughout the training pipeline.
-
-    Passing a single TrainingArtifacts instance greatly reduces
-    function argument lists while keeping the pipeline state
-    centrally organized.
+    Central state container for the training pipeline.
     """
 
     config: TrainingConfig
     output_dir: Path
 
-    # ======================================================
-    # Dataset
-    # ======================================================
+    data: TrainingData | None = None
 
-    X_train: pd.DataFrame | None = None
-    y_train: pd.Series | None = None
-
-    X_val: pd.DataFrame | None = None
-    y_val: pd.Series | None = None
-
-    X_test: pd.DataFrame | None = None
-    y_test: pd.Series | None = None
-
-    X_train_scaled: np.ndarray | None = None
-    X_val_scaled: np.ndarray | None = None
-    X_test_scaled_full: np.ndarray | None = None
-
-    X_train_full: pd.DataFrame | None = None
-
-    features: list[str] | None = None
-
-    # ======================================================
-    # Tuned Models
-    # ======================================================
-
-    mlp_model: BaseEstimator | None = None
-    xgb_model: BaseEstimator | None = None
-    lr_model: BaseEstimator | None = None
-
-    # ======================================================
-    # Final Retrained Models
-    # ======================================================
-
-    mlp_final: BaseEstimator | None = None
-    xgb_final: BaseEstimator | None = None
-    lr_final: BaseEstimator | None = None
-
-    # ======================================================
-    # Scalers & Ensemble
-    # ======================================================
-
-    scaler_val: StandardScaler | None = None
-    scaler_full: StandardScaler | None = None
+    lr: ModelArtifacts = field(default_factory=ModelArtifacts)
+    xgb: ModelArtifacts = field(default_factory=ModelArtifacts)
+    mlp: ModelArtifacts = field(default_factory=ModelArtifacts)
 
     ensemble_weights: np.ndarray | None = None
 
 
 def get_experiment_metadata() -> dict[str, str]:
-    """
-    Returns metadata describing the current training run.
-    """
-
+    """Returns metadata describing the current training run."""
     return {
         "run_timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "python_version": sys.version.split()[0],
         "platform": platform.platform(),
-        "dataset_version": "v1.0",
+        "dataset_version": "v2.0-heterogeneous",
     }

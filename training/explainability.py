@@ -16,6 +16,7 @@ Outputs:
 import logging
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import shap
 from sklearn.inspection import permutation_importance
@@ -54,10 +55,16 @@ def generate_mlp_importance(
     """
     logger.info("      Evaluating MLP Permutation Importance...")
 
+    X_val = artifacts.mlp.feature_set.X_val_processed
+    y_val = artifacts.data.y_val
+
+    # Replace NaNs/Infs with 0 if they exist
+    X_val = pd.DataFrame(X_val).fillna(0).replace([np.inf, -np.inf], 0).values
+
     permutation = permutation_importance(
-        artifacts.mlp_final,
-        artifacts.X_val_scaled,
-        artifacts.y_val,
+        artifacts.mlp.final_model,
+        artifacts.mlp.feature_set.X_val_processed,
+        artifacts.data.y_val,
         n_repeats=artifacts.config.permutation_repeats,
         random_state=artifacts.config.random_seed,
         n_jobs=-1,
@@ -66,7 +73,7 @@ def generate_mlp_importance(
     importance_df = (
         pd.DataFrame(
             {
-                "Feature": artifacts.features,
+                "Feature": artifacts.mlp.feature_set.feature_names,
                 "Importance": permutation.importances_mean,
             }
         )
@@ -92,12 +99,14 @@ def generate_xgb_importance(
     """
     logger.info("      Extracting XGBoost Tree Importance...")
 
-    xgb_raw = unwrap_base_estimator(artifacts.xgb_final)
+    xgb_raw = unwrap_base_estimator(
+        artifacts.xgb.final_model
+    )
 
     importance_df = (
         pd.DataFrame(
             {
-                "Feature": artifacts.features,
+                "Feature": artifacts.xgb.feature_set.feature_names,
                 "Importance": xgb_raw.feature_importances_,
             }
         )
@@ -124,11 +133,13 @@ def generate_lr_coefficients(
     logger.info("      Extracting Logistic Regression Coefficients...")
 
     # Unwrap the base estimator because it is now calibrated
-    lr_raw = unwrap_base_estimator(artifacts.lr_final)
+    lr_raw = unwrap_base_estimator(
+        artifacts.lr.final_model
+    )
 
     coefficients_df = pd.DataFrame(
         {
-            "Feature": artifacts.features,
+            "Feature": artifacts.lr.feature_set.feature_names,
             "Weight": lr_raw.coef_[0],
         }
     )
@@ -164,15 +175,15 @@ def generate_shap(
 
     sample_size = min(
         artifacts.config.n_shap_samples,
-        len(artifacts.X_train_full),
+        len(artifacts.xgb.feature_set.X_train_full),
     )
 
-    X_explain = artifacts.X_train_full.sample(
+    X_explain = artifacts.xgb.feature_set.X_train_full.sample(
         n=sample_size,
         random_state=artifacts.config.random_seed,
     )
 
-    explainer = shap.TreeExplainer(unwrap_base_estimator(artifacts.xgb_final))
+    explainer = shap.TreeExplainer(unwrap_base_estimator(artifacts.xgb.final_model))
     shap_values = explainer.shap_values(X_explain)
 
     plt.figure(figsize=(10, 8))

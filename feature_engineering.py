@@ -188,6 +188,27 @@ def build_matchups(df: pd.DataFrame) -> pd.DataFrame:
         matchups_df[delta_col] = matchups_df[f"HOME_{col}"] - matchups_df[f"AWAY_{col}"]
 
     matchups_df = matchups_df.dropna(subset=[f'DELTA_Z_PTS_ROLLING_{ROLLING_WINDOW}'])
+
+    # ---------------------------------------------------------
+    # Drop Post-Game Box Score Stats
+    # ---------------------------------------------------------
+    raw_box_score_stats = [
+        'PTS', 'FGM', 'FGA', 'FG_PCT', 'FG3M', 'FG3A', 'FG3_PCT',
+        'FTM', 'FTA', 'FT_PCT', 'OREB', 'DREB', 'REB', 'AST', 'STL',
+        'BLK', 'TOV', 'PF', 'PLUS_MINUS', 'POSSESSIONS'
+    ]
+    
+    cols_to_drop = []
+    for stat in raw_box_score_stats:
+        cols_to_drop.extend([
+            f"HOME_{stat}", f"AWAY_{stat}", 
+            f"HOME_Z_{stat}", f"AWAY_Z_{stat}"
+        ])
+        
+    matchups_df = matchups_df.drop(
+        columns=[c for c in cols_to_drop if c in matchups_df.columns]
+    )
+
     return matchups_df
 
 # ======================================================

@@ -9,6 +9,7 @@ features into the matchup dataset.
 Input:
     data/raw_player_game_logs.csv
     data/ml_ready_matchups.csv
+    data/player_embeddings.csv
 
 Output:
     data/ml_ready_matchups_players.csv
@@ -46,18 +47,10 @@ logger = logging.getLogger(__name__)
 # ======================================================
 
 def parse_minutes(minutes: pd.Series) -> pd.Series:
-    """
-    Converts NBA API minute strings (MM:SS) into decimal minutes.
-
-    Handles malformed values safely by coercing invalid values to zero.
-    """
-
+    """Converts NBA API minute strings (MM:SS) into decimal minutes."""
     time_split = minutes.astype(str).str.split(":", expand=True)
-
-    # Some API rows may contain only whole minutes (e.g. "38")
     if 1 not in time_split.columns:
         time_split[1] = 0
-
     return (
         pd.to_numeric(time_split[0], errors="coerce").fillna(DEFAULT_VALUE)
         + pd.to_numeric(time_split[1], errors="coerce").fillna(DEFAULT_VALUE) / 60.0
@@ -65,11 +58,7 @@ def parse_minutes(minutes: pd.Series) -> pd.Series:
 
 
 def calculate_game_score(df: pd.DataFrame) -> pd.Series:
-    """
-    Computes John Hollinger's Game Score for each player appearance,
-    providing a single-game estimate of overall player productivity.
-    """
-
+    """Computes John Hollinger's Game Score for each player appearance."""
     return (
         df["PTS"]
         + (0.4 * df["FGM"])
@@ -86,17 +75,8 @@ def calculate_game_score(df: pd.DataFrame) -> pd.Series:
 
 
 def rolling_mean(series: pd.Series) -> pd.Series:
-    """
-    Computes a rolling mean using only prior observations.
-
-    shift(1) prevents target leakage by excluding the current game.
-    """
-
-    return (
-        series.shift(1)
-        .rolling(ROLLING_WINDOW, min_periods=1)
-        .mean()
-    )
+    """Computes a rolling mean using only prior observations."""
+    return series.shift(1).rolling(ROLLING_WINDOW, min_periods=1).mean()
 
 
 # ======================================================
@@ -106,12 +86,9 @@ def rolling_mean(series: pd.Series) -> pd.Series:
 def main() -> None:
     """Generate player-based matchup features."""
 
-    # ======================================================
-    # Load datasets
-    # ======================================================
-
     logs_df = pd.read_csv(DATA_DIR / GAME_LOGS_FILE)
     matchups_df = pd.read_csv(DATA_DIR / MATCHUPS_FILE)
+    embeddings_df = pd.read_csv(DATA_DIR / "player_embeddings.csv")
 
     logger.info(
         f"Loaded {len(logs_df):,} player logs and "
@@ -125,7 +102,9 @@ def main() -> None:
     logs_df["PLAYER_ID"] = logs_df["PLAYER_ID"].astype(str)
     logs_df["GAME_DATE"] = pd.to_datetime(logs_df["GAME_DATE"])
 
-    # Ensure rolling statistics follow each player's true career timeline.
+    embeddings_df["PLAYER_ID"] = embeddings_df["PLAYER_ID"].astype(str)
+    embeddings_df["GAME_DATE"] = pd.to_datetime(embeddings_df["GAME_DATE"])
+
     logs_df = (
         logs_df.sort_values(["PLAYER_ID", "GAME_DATE"])
         .reset_index(drop=True)
@@ -136,7 +115,6 @@ def main() -> None:
         GAME_SCORE=calculate_game_score(logs_df),
     )
 
-    # Precompute player groups to avoid repeated groupby operations.
     player_groups = logs_df.groupby("PLAYER_ID")
 
     logs_df = logs_df.assign(
@@ -145,33 +123,55 @@ def main() -> None:
     )
 
     # ======================================================
-    # Aggregate player impact to the team level
+    # Merge Embeddings & Calculate Expected Impact
     # ======================================================
 
-    # Weight recent player performance by expected playing time to estimate
-    # each player's projected contribution before tip-off.
-    logs_df["EXPECTED_IMPACT"] = (
-        logs_df["PLAYER_FORM_ROLLING"]
-        * logs_df["MINUTES_ROLLING"]
+    logs_df = pd.merge(
+        logs_df,
+        embeddings_df,
+        on=["PLAYER_ID", "GAME_DATE"],
+        how="left"
     )
+
+    logs_df["MINUTES_ROLLING"] = logs_df["MINUTES_ROLLING"].fillna(0)
+    logs_df["PLAYER_FORM_ROLLING"] = logs_df["PLAYER_FORM_ROLLING"].fillna(0)
+    
+    logs_df["EMBED_1"] = logs_df["EMBED_1"].fillna(0)
+    logs_df["EMBED_2"] = logs_df["EMBED_2"].fillna(0)
+
+    logs_df["EXPECTED_IMPACT"] = (
+        logs_df["PLAYER_FORM_ROLLING"] * logs_df["MINUTES_ROLLING"]
+    )
+    
+    logs_df["EXPECTED_EMBED_1"] = logs_df["EMBED_1"] * logs_df["MINUTES_ROLLING"]
+    logs_df["EXPECTED_EMBED_2"] = logs_df["EMBED_2"] * logs_df["MINUTES_ROLLING"]
+
+    # ======================================================
+    # Aggregate to the team level (Named Aggregation)
+    # ======================================================
 
     roster_agg = (
         logs_df
-        .groupby(["GAME_ID", "TEAM_ID"])["EXPECTED_IMPACT"]
-        .agg(["sum", "std"])
-        .reset_index()
-        .rename(
-            columns={
-                "sum": "ACTIVE_ROSTER_FORM_SUM",
-                "std": "ACTIVE_ROSTER_FORM_STD",
-            }
+        .groupby(["GAME_ID", "TEAM_ID"])
+        .agg(
+            ACTIVE_ROSTER_FORM_SUM=("EXPECTED_IMPACT", "sum"),
+            ACTIVE_ROSTER_FORM_STD=("EXPECTED_IMPACT", "std"),
+            _TOP_PLAYER_IMPACT=("EXPECTED_IMPACT", "max"),
+            EXPECTED_EMBED_1=("EXPECTED_EMBED_1", "sum"),
+            EXPECTED_EMBED_2=("EXPECTED_EMBED_2", "sum")
         )
+        .reset_index()
     )
 
     roster_agg["ACTIVE_ROSTER_FORM_STD"] = (
-        roster_agg["ACTIVE_ROSTER_FORM_STD"]
-        .fillna(DEFAULT_VALUE)
+        roster_agg["ACTIVE_ROSTER_FORM_STD"].fillna(DEFAULT_VALUE)
     )
+
+    roster_agg["ACTIVE_ROSTER_STAR_SHARE"] = (
+        roster_agg["_TOP_PLAYER_IMPACT"] / roster_agg["ACTIVE_ROSTER_FORM_SUM"]
+    ).replace([np.inf, -np.inf], np.nan).fillna(DEFAULT_VALUE)
+
+    roster_agg = roster_agg.drop(columns=["_TOP_PLAYER_IMPACT"])
 
     # ======================================================
     # Merge with matchup dataset
@@ -201,32 +201,52 @@ def main() -> None:
         how="left",
     )
 
-    # Consolidate the dataframe after repeated merge operations to avoid
-    # pandas fragmentation and subsequent PerformanceWarnings.
     matchups_df = matchups_df.copy()
 
     # ======================================================
     # Compute matchup-level player feature deltas
     # ======================================================
 
-    # Compare the projected strength of both active rosters.
-    # Positive values indicate an advantage for the home team.
     matchups_df["DELTA_ACTIVE_ROSTER_FORM_SUM"] = (
         matchups_df["HOME_ACTIVE_ROSTER_FORM_SUM"]
         - matchups_df["AWAY_ACTIVE_ROSTER_FORM_SUM"]
     )
 
-    # Compare how concentrated each team's expected production is.
-    # Positive values indicate the home team relies more heavily on a
-    # small number of players, while negative values indicate the away
-    # team has the more top-heavy rotation.
     matchups_df["DELTA_ACTIVE_ROSTER_FORM_STD"] = (
         matchups_df["HOME_ACTIVE_ROSTER_FORM_STD"]
         - matchups_df["AWAY_ACTIVE_ROSTER_FORM_STD"]
     )
 
-    # Fill missing values caused by players or teams without sufficient
-    # historical data early in the dataset.
+    matchups_df["DELTA_ACTIVE_ROSTER_STAR_SHARE"] = (
+        matchups_df["HOME_ACTIVE_ROSTER_STAR_SHARE"]
+        - matchups_df["AWAY_ACTIVE_ROSTER_STAR_SHARE"]
+    )
+
+    matchups_df["EMBED_DELTA_1"] = (
+        matchups_df["HOME_EXPECTED_EMBED_1"]
+        - matchups_df["AWAY_EXPECTED_EMBED_1"]
+    )
+
+    matchups_df["EMBED_DELTA_2"] = (
+        matchups_df["HOME_EXPECTED_EMBED_2"]
+        - matchups_df["AWAY_EXPECTED_EMBED_2"]
+    )
+
+    # ------------------------------------------------------
+    # Drop intermediate embedding columns so XGBoost 
+    # doesn't accidentally absorb them via 'HOME_' prefixes.
+    # ------------------------------------------------------
+    matchups_df.drop(
+        columns=[
+            "HOME_EXPECTED_EMBED_1",
+            "AWAY_EXPECTED_EMBED_1",
+            "HOME_EXPECTED_EMBED_2",
+            "AWAY_EXPECTED_EMBED_2",
+        ],
+        inplace=True,
+        errors="ignore"
+    )
+
     matchups_df = matchups_df.fillna(DEFAULT_VALUE)
 
     # ======================================================

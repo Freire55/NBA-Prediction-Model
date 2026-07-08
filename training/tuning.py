@@ -3,33 +3,32 @@ Hyperparameter tuning utilities for the NBA prediction pipeline.
 
 This module performs hyperparameter optimization for the MLP and
 XGBoost classifiers using RandomizedSearchCV with chronological
-cross-validation. Logistic Regression is trained directly using
-its default configuration since it has relatively few hyperparameters.
+cross-validation. Logistic Regression is trained using GridSearchCV.
 
-The best models and search results are saved for reproducibility.
+The best models and search results are saved for reproducibility,
+and all resulting estimators are probability-calibrated.
 
 Functions:
     tune_base_models()
 """
 
-from pathlib import Path
-from typing import Any, Tuple
-
 import logging
-import numpy as np
+from pathlib import Path
+from typing import Tuple
+
 import pandas as pd
 from sklearn.base import clone
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import (
-    RandomizedSearchCV,
     GridSearchCV,
+    RandomizedSearchCV,
     TimeSeriesSplit,
 )
 from sklearn.neural_network import MLPClassifier
 from xgboost import XGBClassifier
 
-from training.config import TrainingConfig
+from training.config import ModelArtifacts, TrainingConfig, TrainingData
 from training.utils import save_json
 
 logger = logging.getLogger(__name__)
@@ -52,37 +51,30 @@ LR_RESULTS_FILE = "lr_cv_results.csv"
 # ======================================================
 
 def tune_base_models(
-    X_train_scaled: np.ndarray,
-    y_train: pd.Series,
-    X_train: pd.DataFrame,
+    data: TrainingData,
     config: TrainingConfig,
     output_dir: Path,
-) -> Tuple[Any, Any, Any]:
+) -> Tuple[ModelArtifacts, ModelArtifacts, ModelArtifacts]:
     """
-    Tunes the MLP, XGBoost and Logistic Regression classifiers using
-    RandomizedSearchCV with chronological cross-validation.
+    Tunes the MLP, XGBoost, and Logistic Regression classifiers using
+    chronological cross-validation.
 
     The resulting best estimators are probability-calibrated using
-    CalibratedClassifierCV before being returned.
+    CalibratedClassifierCV before being bundled into ModelArtifacts.
 
     Args:
-        X_train_scaled:
-            Standardized training features for MLP and Logistic Regression.
-        y_train:
-            Training labels.
-        X_train:
-            Original (unscaled) training features for XGBoost.
+        data:
+            The prepared training data containing model-specific feature sets.
         config:
-            Training configuration containing search spaces and
-            optimization settings.
+            Training configuration containing search spaces.
         output_dir:
             Directory where tuning artifacts are saved.
 
     Returns:
-    Tuple containing:
-        - Calibrated MLP classifier
-        - Calibrated XGBoost classifier
-        - Calibrated Logistic Regression classifier
+        Tuple containing:
+            - MLP ModelArtifacts
+            - XGBoost ModelArtifacts
+            - Logistic Regression ModelArtifacts
     """
     # --------------------------------------------------
     # Time-series cross-validation
@@ -124,26 +116,35 @@ def tune_base_models(
         n_jobs=-1,
     )
 
-
     lr_search = GridSearchCV(
-    estimator=LogisticRegression(
-        max_iter=1000,
-        random_state=config.random_seed,
-    ),
-    param_grid=config.lr_grid,
-    cv=tscv,
-    scoring="neg_log_loss",
-    n_jobs=-1,
-)
+        estimator=LogisticRegression(
+            max_iter=1000,
+            random_state=config.random_seed,
+        ),
+        param_grid=config.lr_grid,
+        cv=tscv,
+        scoring="neg_log_loss",
+        n_jobs=-1,
+    )
 
     # --------------------------------------------------
     # Model training
     # --------------------------------------------------
 
-    mlp_search.fit(X_train_scaled, y_train)
-    xgb_search.fit(X_train, y_train)
-    lr_search.fit(X_train_scaled, y_train)
-
+    mlp_search.fit(
+        data.mlp.X_train_processed,
+        data.y_train,
+    )
+    
+    xgb_search.fit(
+        data.xgb.X_train,
+        data.y_train,
+    )
+    
+    lr_search.fit(
+        data.lr.X_train_processed,
+        data.y_train,
+    )
 
     logger.info(
         f"      Best MLP CV Log Loss: {-mlp_search.best_score_:.4f}"
@@ -158,28 +159,38 @@ def tune_base_models(
     # --------------------------------------------------
     # Probability calibration (Platt / sigmoid scaling)
     # --------------------------------------------------
-
+    
+    logger.info("      Applying cross-validated calibration to base models...")
 
     mlp_calibrated = CalibratedClassifierCV(
         clone(mlp_search.best_estimator_),
         method="sigmoid",
         cv=tscv,
     )
-    mlp_calibrated.fit(X_train_scaled, y_train)
+    mlp_calibrated.fit(
+        data.mlp.X_train_processed,
+        data.y_train,
+    )
 
     xgb_calibrated = CalibratedClassifierCV(
         clone(xgb_search.best_estimator_),
         method="sigmoid",
         cv=tscv,
     )
-    xgb_calibrated.fit(X_train, y_train)
+    xgb_calibrated.fit(
+        data.xgb.X_train,
+        data.y_train,
+    )
 
     lr_calibrated = CalibratedClassifierCV(
         clone(lr_search.best_estimator_),
         method="sigmoid",
         cv=tscv,
     )
-    lr_calibrated.fit(X_train_scaled, y_train)
+    lr_calibrated.fit(
+        data.lr.X_train_processed,
+        data.y_train,
+    )
 
     # --------------------------------------------------
     # Save tuning artifacts
@@ -221,8 +232,23 @@ def tune_base_models(
         index=False,
     )
 
-    return (
-        mlp_calibrated,
-        xgb_calibrated,
-        lr_calibrated,
+    # --------------------------------------------------
+    # Package into ModelArtifacts
+    # --------------------------------------------------
+
+    mlp_artifacts = ModelArtifacts(
+        feature_set=data.mlp,
+        model=mlp_calibrated,
     )
+    
+    xgb_artifacts = ModelArtifacts(
+        feature_set=data.xgb,
+        model=xgb_calibrated,
+    )
+    
+    lr_artifacts = ModelArtifacts(
+        feature_set=data.lr,
+        model=lr_calibrated,
+    )
+
+    return mlp_artifacts, xgb_artifacts, lr_artifacts

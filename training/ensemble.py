@@ -6,13 +6,15 @@ calibrated MLP, XGBoost, and Logistic Regression models using Non-Negative
 Least Squares (NNLS).
 """
 
+import logging
 from typing import Any, Dict, Tuple
 
-import logging
 import numpy as np
+import pandas as pd
 from scipy.optimize import minimize
 from sklearn.metrics import log_loss
 
+from training.config import FeatureSet, ModelArtifacts
 
 # ======================================================
 # Logging
@@ -26,12 +28,10 @@ logger = logging.getLogger(__name__)
 # ======================================================
 
 def learn_ensemble_weights(
-    mlp_model: Any,
-    xgb_model: Any,
-    lr_model: Any,
-    X_val_scaled: np.ndarray,
-    X_val: np.ndarray,
-    y_val: np.ndarray,
+    mlp: ModelArtifacts,
+    xgb: ModelArtifacts,
+    lr: ModelArtifacts,
+    y_val: pd.Series,
 ) -> Tuple[np.ndarray, Dict[str, float]]:
     """
     Learns non-negative ensemble weights using validation predictions.
@@ -43,20 +43,17 @@ def learn_ensemble_weights(
     ----------
     mlp_model : Any
         Calibrated MLP classifier.
-
     xgb_model : Any
         Calibrated XGBoost classifier.
-
     lr_model : Any
         Calibrated Logistic Regression classifier.
-
-    X_val_scaled : np.ndarray
-        Standardized validation features (used by MLP and LR).
-
-    X_val : np.ndarray
-        Original validation features (used by XGBoost).
-
-    y_val : np.ndarray
+    mlp_data : FeatureSet
+        Feature set used by the MLP.
+    xgb_data : FeatureSet
+        Feature set used by XGBoost.
+    lr_data : FeatureSet
+        Feature set used by Logistic Regression.
+    y_val : pd.Series
         Validation labels.
 
     Returns
@@ -66,12 +63,22 @@ def learn_ensemble_weights(
         - normalized ensemble weights
         - dictionary describing the learned ensemble formula
     """
-    # Generate validation probabilities from calibrated models
-    mlp_probs = mlp_model.predict_proba(X_val_scaled)[:, 1]
-    xgb_probs = xgb_model.predict_proba(X_val)[:, 1]
-    lr_probs = lr_model.predict_proba(X_val_scaled)[:, 1]
+    logger.info("      Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...")
 
-# Stack predictions for optimization
+    # Generate validation probabilities from calibrated models
+    mlp_probs = mlp.model.predict_proba(
+        mlp.feature_set.X_val_processed
+    )[:, 1]
+
+    xgb_probs = xgb.model.predict_proba(
+        xgb.feature_set.X_val
+    )[:, 1]
+
+    lr_probs = lr.model.predict_proba(
+        lr.feature_set.X_val_processed
+    )[:, 1]
+
+    # Stack predictions for optimization
     stacked_predictions = np.column_stack(
         (mlp_probs, xgb_probs, lr_probs)
     )

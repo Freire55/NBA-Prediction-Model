@@ -105,16 +105,17 @@ def evaluate_all_models(
         - Ensemble binary predictions.
         - Ensemble probability predictions.
     """
-    mlp_probs = artifacts.mlp_final.predict_proba(
-        artifacts.X_test_scaled_full
+    
+    mlp_probs = artifacts.mlp.final_model.predict_proba(
+        artifacts.mlp.feature_set.X_test_processed
     )[:, 1]
 
-    xgb_probs = artifacts.xgb_final.predict_proba(
-        artifacts.X_test
+    xgb_probs = artifacts.xgb.final_model.predict_proba(
+        artifacts.xgb.feature_set.X_test
     )[:, 1]
 
-    lr_probs = artifacts.lr_final.predict_proba(
-        artifacts.X_test_scaled_full
+    lr_probs = artifacts.lr.final_model.predict_proba(
+        artifacts.lr.feature_set.X_test_processed
     )[:, 1]
 
     weights = artifacts.ensemble_weights
@@ -137,7 +138,7 @@ def evaluate_all_models(
 
     for model_name, probs in model_probabilities.items():
         preds, model_metrics = compute_metrics(
-            artifacts.y_test,
+            artifacts.data.y_test,
             probs,
         )
 

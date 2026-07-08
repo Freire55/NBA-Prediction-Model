@@ -15,6 +15,7 @@ Each stage is timed and logged, with all outputs stored in a
 timestamped experiment directory.
 """
 
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
@@ -80,7 +81,7 @@ def save_json_artifacts(
     json_artifacts = {
         "training_config.json": config.to_dict(),
         "metadata.json": get_experiment_metadata(),
-        "dataset_summary.json": dataset_summary,
+        "dataset_summary.json": asdict(dataset_summary),
         "ensemble_formula.json": ensemble_formula,
         "test_metrics.json": metrics_dict,
     }
@@ -89,16 +90,22 @@ def save_json_artifacts(
         save_json(data, output_dir / filename)
 
 
-def save_model_artifacts(artifacts):
+def save_model_artifacts(artifacts: TrainingArtifacts):
     """Serializes trained models and supporting objects."""
 
     joblib_artifacts = {
-        "mlp_model.pkl": artifacts.mlp_final,
-        "xgb_model.pkl": artifacts.xgb_final,
-        "lr_model.pkl": artifacts.lr_final,
-        "scaler.pkl": artifacts.scaler_full,
+        "mlp_model.pkl": artifacts.mlp.final_model,
+        "xgb_model.pkl": artifacts.xgb.final_model,
+        "lr_model.pkl": artifacts.lr.final_model,
+
+        "mlp_scaler.pkl": artifacts.mlp.feature_set.scaler,
+        "lr_scaler.pkl": artifacts.lr.feature_set.scaler,
+
         "ensemble_weights.pkl": artifacts.ensemble_weights,
-        "feature_order.pkl": artifacts.features,
+
+        "mlp_features.pkl": artifacts.data.summary.mlp_feature_names,
+        "xgb_features.pkl": artifacts.data.summary.xgb_feature_names,
+        "lr_features.pkl": artifacts.data.summary.lr_feature_names,
     }
 
     for filename, obj in joblib_artifacts.items():
@@ -163,32 +170,12 @@ def main() -> None:
         TOTAL_PIPELINE_STAGES,
         "Data preparation & scaling",
     ):
-        (
-            X_train,
-            y_train,
-            X_val,
-            y_val,
-            X_test,
-            y_test,
-            features,
-            dataset_summary,
-        ) = load_and_prep_data(data_dir, config)
+        artifacts.data = load_and_prep_data(data_dir, config)
+        
+        scale_features(artifacts.data.mlp)
+        scale_features(artifacts.data.lr)
 
-        X_train_scaled, X_val_scaled, scaler_val = scale_features(
-            X_train,
-            X_val,
-        )
-
-        artifacts.X_train = X_train
-        artifacts.y_train = y_train
-        artifacts.X_val = X_val
-        artifacts.y_val = y_val
-        artifacts.X_test = X_test
-        artifacts.y_test = y_test
-        artifacts.features = features
-        artifacts.X_train_scaled = X_train_scaled
-        artifacts.X_val_scaled = X_val_scaled
-        artifacts.scaler_val = scaler_val
+        dataset_summary = artifacts.data.summary
 
     # ======================================================
     # Hyperparameter Tuning
@@ -200,18 +187,15 @@ def main() -> None:
         "Hyperparameter tuning & cross-validated calibration",
     ):
         (
-            artifacts.mlp_model,
-            artifacts.xgb_model,
-            artifacts.lr_model,
+            artifacts.mlp,
+            artifacts.xgb,
+            artifacts.lr,
         ) = tune_base_models(
-            artifacts.X_train_scaled,
-            artifacts.y_train,
-            artifacts.X_train,
+            artifacts.data,
             config,
             output_dir,
         )
         logger.info("      Base models successfully calibrated (Method: Sigmoid).")
-
 
     # ======================================================
     # Ensemble Learning
@@ -226,12 +210,10 @@ def main() -> None:
             artifacts.ensemble_weights,
             ensemble_formula,
         ) = learn_ensemble_weights(
-            artifacts.mlp_model,
-            artifacts.xgb_model,
-            artifacts.lr_model,
-            artifacts.X_val_scaled,
-            artifacts.X_val,
-            artifacts.y_val,
+            artifacts.mlp,
+            artifacts.xgb,
+            artifacts.lr,
+            artifacts.data.y_val,
         )
 
     # ======================================================
@@ -243,24 +225,7 @@ def main() -> None:
         TOTAL_PIPELINE_STAGES,
         "Retraining on full historical data",
     ):
-        (
-            artifacts.mlp_final,
-            artifacts.xgb_final,
-            artifacts.lr_final,
-            artifacts.scaler_full,
-            artifacts.X_train_full,
-            artifacts.X_test_scaled_full,
-        ) = retrain_on_full_data(
-            artifacts.X_train,
-            artifacts.X_val,
-            artifacts.y_train,
-            artifacts.y_val,
-            artifacts.X_test,
-            artifacts.mlp_model,
-            artifacts.xgb_model,
-            artifacts.lr_model,
-            output_dir,
-        )
+        retrain_on_full_data(artifacts)
 
     # ======================================================
     # Explainability
@@ -294,14 +259,14 @@ def main() -> None:
         ensemble_metrics = metrics_dict["Ensemble"]
 
         plot_roc_curve(
-            artifacts.y_test,
+            artifacts.data.y_test,
             ensemble_probs,
             ensemble_metrics["ROC_AUC"],
             output_dir,
         )
 
         plot_calibration(
-            artifacts.y_test,
+            artifacts.data.y_test,
             ensemble_probs,
             ensemble_metrics["Brier_Score"],
             config.calibration_bins,
@@ -309,7 +274,7 @@ def main() -> None:
         )
 
         plot_confusion(
-            artifacts.y_test,
+            artifacts.data.y_test,
             ensemble_preds,
             ensemble_metrics["Accuracy"],
             output_dir,

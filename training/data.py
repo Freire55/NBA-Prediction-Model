@@ -5,23 +5,22 @@ This module reads the engineered matchup dataset, validates the required
 schema, selects the configured feature set, performs chronological
 train/validation/test splits, and standardizes numerical features for
 models that require feature scaling.
-
-Input:
-    data/ml_ready_matchups_players.csv
-
-Output:
-    Train, validation and test datasets ready for the training pipeline.
 """
 
+import logging
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-import logging
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
-from training.config import TrainingConfig
+from training.config import (
+    DatasetSummary,
+    FeatureSet,
+    TrainingData,
+    TrainingConfig,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,110 +33,112 @@ DATASET_FILE = "ml_ready_matchups_players.csv"
 TARGET_COLUMN = "HOME_WIN"
 SEASON_COLUMN = "HOME_SEASON_ID"
 
-DatasetSplit = Tuple[
-    pd.DataFrame,
-    pd.Series,
-    pd.DataFrame,
-    pd.Series,
-    pd.DataFrame,
-    pd.Series,
-    List[str],
-    Dict,
-]
-
 
 # ======================================================
 # Helper Functions
 # ======================================================
 
-def select_features(df: pd.DataFrame, config: TrainingConfig) -> List[str]:
-    """
-    Returns the configured feature list after validating that every
-    requested feature exists in the dataset.
-    """
-    features = [
-        col for col in df.columns
-        if col.startswith(config.feature_prefix)
-    ] + config.extra_features
+def get_model_features(
+    df: pd.DataFrame, 
+    config: TrainingConfig
+) -> Dict[str, List[str]]:
+    """Builds distinct feature lists for each model architecture."""
+    
+    numeric_cols = set(df.select_dtypes(include=["number"]).columns)
+    safe_extra = [col for col in config.extra_features if col in numeric_cols]
+    
+    # ---------------------------------------------------------
+    # CRITICAL: Prevent the Target Column from becoming a feature!
+    # ---------------------------------------------------------
+    exclude_cols = {TARGET_COLUMN}
+    
+    lr_features = [
+        col for col in df.columns 
+        if any(col.startswith(p) for p in config.lr_prefixes)
+        and col in numeric_cols
+        and col not in exclude_cols
+    ] + safe_extra
+    
+    xgb_features = [
+        col for col in df.columns 
+        if any(col.startswith(p) for p in config.xgb_prefixes) 
+        and "_Z_" not in col
+        and col in numeric_cols
+        and col not in exclude_cols
+    ] + safe_extra
+    
+    mlp_features = [
+        col for col in df.columns 
+        if any(col.startswith(p) for p in config.mlp_prefixes)
+        and col in numeric_cols
+        and col not in exclude_cols
+    ] + safe_extra
 
-    missing_features = [f for f in features if f not in df.columns]
-
-    if missing_features:
-        raise ValueError(
-            f"Configured features are missing from the dataset: {missing_features}"
-        )
-
-    return features
-
-
-# ======================================================
-# Data Preparation
-# ======================================================
-
-def load_and_prep_data(
-    data_dir: Path,
-    config: TrainingConfig,
-) -> DatasetSplit:
-    """
-    Loads the engineered matchup dataset, validates its schema,
-    selects the configured feature set, and performs chronological
-    train/validation/test splits.
-
-    Returns
-    -------
-    DatasetSplit
-        Tuple containing train, validation and test features,
-        labels, feature names, and dataset summary statistics.
-    """
-    df = pd.read_csv(data_dir / DATASET_FILE)
-
-    # Validate required columns
-    if TARGET_COLUMN not in df.columns:
-        raise ValueError(f"Missing required target column '{TARGET_COLUMN}'.")
-
-    if SEASON_COLUMN not in df.columns:
-        raise ValueError(
-            f"Missing required season column '{SEASON_COLUMN}'."
-        )
-
-    features = select_features(df, config)
-
-    # Ensure chronological comparisons use string values
-    df[SEASON_COLUMN] = df[SEASON_COLUMN].astype(str)
-
-    # Chronological train / validation / test split
-    train_df = df[df[SEASON_COLUMN] <= config.train_end]
-
-    val_df = df[
-        (df[SEASON_COLUMN] > config.train_end)
-        & (df[SEASON_COLUMN] <= config.validation_end)
-    ]
-
-    test_df = df[df[SEASON_COLUMN] > config.validation_end]
-
-    dataset_summary = {
-        "train_games": len(train_df),
-        "validation_games": len(val_df),
-        "test_games": len(test_df),
-        "feature_count": len(features),
+    return {
+        "mlp": list(dict.fromkeys(mlp_features)),
+        "xgb": list(dict.fromkeys(xgb_features)),
+        "lr": list(dict.fromkeys(lr_features)),
     }
 
-    logger.info(
-        "      Train: %d | Val: %d | Test: %d",
-        len(train_df),
-        len(val_df),
-        len(test_df),
+
+def load_and_prep_data(
+    data_dir: Path, 
+    config: TrainingConfig
+) -> TrainingData:
+    """Loads dataset and performs chronological splits for all feature sets."""
+    df = pd.read_csv(data_dir / DATASET_FILE)
+
+    df[SEASON_COLUMN] = df[SEASON_COLUMN].astype(str)
+    feature_dict = get_model_features(df, config)
+
+    # Chronological Split
+    train_df = df[df[SEASON_COLUMN] <= config.train_end]
+    val_df = df[(df[SEASON_COLUMN] > config.train_end) & (df[SEASON_COLUMN] <= config.validation_end)]
+    test_df = df[df[SEASON_COLUMN] > config.validation_end]
+
+    summary = DatasetSummary(
+        train_games=len(train_df),
+        validation_games=len(val_df),
+        test_games=len(test_df),
+        lr_feature_names=feature_dict["lr"],
+        xgb_feature_names=feature_dict["xgb"],
+        mlp_feature_names=feature_dict["mlp"],
     )
 
-    return (
-        train_df[features],
-        train_df[TARGET_COLUMN],
-        val_df[features],
-        val_df[TARGET_COLUMN],
-        test_df[features],
-        test_df[TARGET_COLUMN],
-        features,
-        dataset_summary,
+    logger.info(
+        f"      Train: {summary.train_games} | "
+        f"Val: {summary.validation_games} | "
+        f"Test: {summary.test_games}"
+    )
+    logger.info(
+        f"      Features -> LR: {len(summary.lr_feature_names)} | "
+        f"XGB: {len(summary.xgb_feature_names)} | "
+        f"MLP: {len(summary.mlp_feature_names)}"
+    )
+
+    return TrainingData(
+        lr=FeatureSet(
+            X_train=train_df[feature_dict["lr"]].copy(),
+            X_val=val_df[feature_dict["lr"]].copy(),
+            X_test=test_df[feature_dict["lr"]].copy(),
+            feature_names=feature_dict["lr"]
+        ),
+        xgb=FeatureSet(
+            X_train=train_df[feature_dict["xgb"]].copy(),
+            X_val=val_df[feature_dict["xgb"]].copy(),
+            X_test=test_df[feature_dict["xgb"]].copy(),
+            feature_names=feature_dict["xgb"]
+        ),
+        mlp=FeatureSet(
+            X_train=train_df[feature_dict["mlp"]].copy(),
+            X_val=val_df[feature_dict["mlp"]].copy(),
+            X_test=test_df[feature_dict["mlp"]].copy(),
+            feature_names=feature_dict["mlp"]
+        ),
+        y_train=train_df[TARGET_COLUMN].copy(),
+        y_val=val_df[TARGET_COLUMN].copy(),
+        y_test=test_df[TARGET_COLUMN].copy(),
+        summary=summary
     )
 
 
@@ -146,21 +147,21 @@ def load_and_prep_data(
 # ======================================================
 
 def scale_features(
-    X_train: pd.DataFrame,
-    X_val: pd.DataFrame,
-) -> Tuple[np.ndarray, np.ndarray, StandardScaler]:
-    """
-    Fits a StandardScaler on the training data and applies it to both
-    the training and validation feature matrices.
+    feature_set: FeatureSet,
+) -> None:
 
-    Returns
-    -------
-    tuple
-        (scaled_train_features, scaled_validation_features, fitted_scaler)
-    """
     scaler = StandardScaler()
 
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_val_scaled = scaler.transform(X_val)
+    feature_set.X_train_processed = scaler.fit_transform(
+        feature_set.X_train
+    )
 
-    return X_train_scaled, X_val_scaled, scaler
+    feature_set.X_val_processed = scaler.transform(
+        feature_set.X_val
+    )
+
+    feature_set.X_test_processed = scaler.transform(
+        feature_set.X_test
+    )
+
+    feature_set.scaler = scaler
