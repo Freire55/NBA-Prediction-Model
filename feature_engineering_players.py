@@ -138,6 +138,8 @@ def main() -> None:
     
     logs_df["EMBED_1"] = logs_df["EMBED_1"].fillna(0)
     logs_df["EMBED_2"] = logs_df["EMBED_2"].fillna(0)
+    logs_df["EMBED_3"] = logs_df["EMBED_3"].fillna(0)
+    logs_df["EMBED_4"] = logs_df["EMBED_4"].fillna(0)
 
     logs_df["EXPECTED_IMPACT"] = (
         logs_df["PLAYER_FORM_ROLLING"] * logs_df["MINUTES_ROLLING"]
@@ -145,6 +147,8 @@ def main() -> None:
     
     logs_df["EXPECTED_EMBED_1"] = logs_df["EMBED_1"] * logs_df["MINUTES_ROLLING"]
     logs_df["EXPECTED_EMBED_2"] = logs_df["EMBED_2"] * logs_df["MINUTES_ROLLING"]
+    logs_df["EXPECTED_EMBED_3"] = logs_df["EMBED_3"] * logs_df["MINUTES_ROLLING"]
+    logs_df["EXPECTED_EMBED_4"] = logs_df["EMBED_4"] * logs_df["MINUTES_ROLLING"]
 
     # ======================================================
     # Aggregate to the team level (Named Aggregation)
@@ -168,11 +172,25 @@ def main() -> None:
             EXPECTED_EMBED_2_MAX=("EXPECTED_EMBED_2", "max"),
             EXPECTED_EMBED_2_STD=("EXPECTED_EMBED_2", "std"),
 
+            EXPECTED_EMBED_3_SUM=("EXPECTED_EMBED_3", "sum"),
+            EXPECTED_EMBED_3_MAX=("EXPECTED_EMBED_3", "max"),
+            EXPECTED_EMBED_3_STD=("EXPECTED_EMBED_3", "std"),
+
+            EXPECTED_EMBED_4_SUM=("EXPECTED_EMBED_4", "sum"),
+            EXPECTED_EMBED_4_MAX=("EXPECTED_EMBED_4", "max"),
+            EXPECTED_EMBED_4_STD=("EXPECTED_EMBED_4", "std"),
+
             EMBED_1_MAX=("EMBED_1", "max"),
             EMBED_1_STD=("EMBED_1", "std"),
 
             EMBED_2_MAX=("EMBED_2", "max"),
             EMBED_2_STD=("EMBED_2", "std"),
+
+            EMBED_3_MAX=("EMBED_3", "max"),
+            EMBED_3_STD=("EMBED_3", "std"),
+
+            EMBED_4_MAX=("EMBED_4", "max"),
+            EMBED_4_STD=("EMBED_4", "std"),
         )
         .reset_index()
     )
@@ -191,6 +209,14 @@ def main() -> None:
 
     roster_agg["EXPECTED_EMBED_2_WEIGHTED_MEAN"] = (
         roster_agg["EXPECTED_EMBED_2_SUM"] / roster_agg["TOTAL_EXPECTED_MINUTES"]
+    ).replace([np.inf, -np.inf], np.nan).fillna(DEFAULT_VALUE)
+
+    roster_agg["EXPECTED_EMBED_3_WEIGHTED_MEAN"] = (
+        roster_agg["EXPECTED_EMBED_3_SUM"] / roster_agg["TOTAL_EXPECTED_MINUTES"]
+    ).replace([np.inf, -np.inf], np.nan).fillna(DEFAULT_VALUE)
+
+    roster_agg["EXPECTED_EMBED_4_WEIGHTED_MEAN"] = (
+        roster_agg["EXPECTED_EMBED_4_SUM"] / roster_agg["TOTAL_EXPECTED_MINUTES"]
     ).replace([np.inf, -np.inf], np.nan).fillna(DEFAULT_VALUE)
 
 
@@ -285,6 +311,40 @@ def main() -> None:
         - matchups_df["AWAY_EXPECTED_EMBED_2_WEIGHTED_MEAN"]
     )
 
+    matchups_df["EMBED_DELTA_3_SUM"] = (
+        matchups_df["HOME_EXPECTED_EMBED_3_SUM"]
+        - matchups_df["AWAY_EXPECTED_EMBED_3_SUM"]
+    )
+    matchups_df["EMBED_DELTA_3_MAX"] = (
+        matchups_df["HOME_EXPECTED_EMBED_3_MAX"]
+        - matchups_df["AWAY_EXPECTED_EMBED_3_MAX"]
+    )
+    matchups_df["EMBED_DELTA_3_STD"] = (
+        matchups_df["HOME_EXPECTED_EMBED_3_STD"]
+        - matchups_df["AWAY_EXPECTED_EMBED_3_STD"]
+    )
+    matchups_df["EMBED_DELTA_3_MEAN"] = (
+        matchups_df["HOME_EXPECTED_EMBED_3_WEIGHTED_MEAN"]
+        - matchups_df["AWAY_EXPECTED_EMBED_3_WEIGHTED_MEAN"]
+    )
+
+    matchups_df["EMBED_DELTA_4_SUM"] = (
+        matchups_df["HOME_EXPECTED_EMBED_4_SUM"]
+        - matchups_df["AWAY_EXPECTED_EMBED_4_SUM"]
+    )
+    matchups_df["EMBED_DELTA_4_MAX"] = (
+        matchups_df["HOME_EXPECTED_EMBED_4_MAX"]
+        - matchups_df["AWAY_EXPECTED_EMBED_4_MAX"]
+    )
+    matchups_df["EMBED_DELTA_4_STD"] = (
+        matchups_df["HOME_EXPECTED_EMBED_4_STD"]
+        - matchups_df["AWAY_EXPECTED_EMBED_4_STD"]
+    )
+    matchups_df["EMBED_DELTA_4_MEAN"] = (
+        matchups_df["HOME_EXPECTED_EMBED_4_WEIGHTED_MEAN"]
+        - matchups_df["AWAY_EXPECTED_EMBED_4_WEIGHTED_MEAN"]
+    )
+
     matchups_df["EMBED_RAW_DELTA_1_MAX"] = (
         matchups_df["HOME_EMBED_1_MAX"]
         - matchups_df["AWAY_EMBED_1_MAX"]
@@ -304,6 +364,26 @@ def main() -> None:
     matchups_df["EMBED_RAW_DELTA_2_STD"] = (
         matchups_df["HOME_EMBED_2_STD"]
         - matchups_df["AWAY_EMBED_2_STD"]
+    )
+
+    matchups_df["EMBED_RAW_DELTA_3_MAX"] = (
+        matchups_df["HOME_EMBED_3_MAX"]
+        - matchups_df["AWAY_EMBED_3_MAX"]
+    )
+
+    matchups_df["EMBED_RAW_DELTA_3_STD"] = (
+        matchups_df["HOME_EMBED_3_STD"]
+        - matchups_df["AWAY_EMBED_3_STD"]
+    )
+
+    matchups_df["EMBED_RAW_DELTA_4_MAX"] = (
+        matchups_df["HOME_EMBED_4_MAX"]
+        - matchups_df["AWAY_EMBED_4_MAX"]
+    )
+
+    matchups_df["EMBED_RAW_DELTA_4_STD"] = (
+        matchups_df["HOME_EMBED_4_STD"]
+        - matchups_df["AWAY_EMBED_4_STD"]
     )
 
 
@@ -327,10 +407,26 @@ def main() -> None:
             "AWAY_EXPECTED_EMBED_2_MAX",
             "HOME_EXPECTED_EMBED_2_STD",
             "AWAY_EXPECTED_EMBED_2_STD",
+            "HOME_EXPECTED_EMBED_3_SUM",
+            "AWAY_EXPECTED_EMBED_3_SUM",
+            "HOME_EXPECTED_EMBED_3_MAX",
+            "AWAY_EXPECTED_EMBED_3_MAX",
+            "HOME_EXPECTED_EMBED_3_STD",
+            "AWAY_EXPECTED_EMBED_3_STD",
+            "HOME_EXPECTED_EMBED_4_SUM",
+            "AWAY_EXPECTED_EMBED_4_SUM",
+            "HOME_EXPECTED_EMBED_4_MAX",
+            "AWAY_EXPECTED_EMBED_4_MAX",
+            "HOME_EXPECTED_EMBED_4_STD",
+            "AWAY_EXPECTED_EMBED_4_STD",
             "HOME_EXPECTED_EMBED_1_WEIGHTED_MEAN",
             "AWAY_EXPECTED_EMBED_1_WEIGHTED_MEAN",
             "HOME_EXPECTED_EMBED_2_WEIGHTED_MEAN",
             "AWAY_EXPECTED_EMBED_2_WEIGHTED_MEAN",
+            "HOME_EXPECTED_EMBED_3_WEIGHTED_MEAN",
+            "AWAY_EXPECTED_EMBED_3_WEIGHTED_MEAN",
+            "HOME_EXPECTED_EMBED_4_WEIGHTED_MEAN",
+            "AWAY_EXPECTED_EMBED_4_WEIGHTED_MEAN",
             "HOME_EMBED_1_MAX",
             "AWAY_EMBED_1_MAX",
             "HOME_EMBED_1_STD",
@@ -339,7 +435,14 @@ def main() -> None:
             "AWAY_EMBED_2_MAX",
             "HOME_EMBED_2_STD",
             "AWAY_EMBED_2_STD",
-            "HOME_E"
+            "HOME_EMBED_3_MAX",
+            "AWAY_EMBED_3_MAX",
+            "HOME_EMBED_3_STD",
+            "AWAY_EMBED_3_STD",
+            "HOME_EMBED_4_MAX",
+            "AWAY_EMBED_4_MAX",
+            "HOME_EMBED_4_STD",
+            "AWAY_EMBED_4_STD",
         ],
         inplace=True,
         errors="ignore"

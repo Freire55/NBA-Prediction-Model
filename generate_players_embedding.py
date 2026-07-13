@@ -178,7 +178,7 @@ def main():
     scaler.fit(df.loc[train_mask, rolling_cols].values)
     X_scaled = scaler.transform(df[rolling_cols].values)
 
-    pca = PCA(n_components=3, random_state=42)
+    pca = PCA(n_components=4, random_state=42)
     pca.fit(X_scaled[train_mask])
     
     embeddings = pca.transform(X_scaled)
@@ -186,15 +186,20 @@ def main():
     # 4. Assign agnostic embedding names
     df["EMBED_1"] = embeddings[:, 0]
     df["EMBED_2"] = embeddings[:, 1]
+    df["EMBED_3"] = embeddings[:, 2]
+    df["EMBED_4"] = embeddings[:, 3]
 
-    output_df = df[["PLAYER_ID", "GAME_DATE", "EMBED_1", "EMBED_2"]]
-    
+    output_df = df[["PLAYER_ID", "GAME_DATE", "EMBED_1", "EMBED_2", "EMBED_3", "EMBED_4"]]
+
     output_path = DATA_DIR / OUTPUT_FILE
     output_df.to_csv(output_path, index=False)
     
     variance_explained = sum(pca.explained_variance_ratio_) * 100
     logger.info(f"Success! Generated embeddings for {len(output_df):,} player appearances.")
-    logger.info(f"The 2 Principal Components capture {variance_explained:.1f}% of historical playstyle variance.")
+    logger.info(f"The 3 Principal Components capture {variance_explained:.1f}% of historical playstyle variance.")
+    logger.info("Explained variance ratio:")
+    for i, var in enumerate(pca.explained_variance_ratio_, 1):
+        logger.info(f"PC{i}: {var:.3%}")
 
 if __name__ == "__main__":
     main()
