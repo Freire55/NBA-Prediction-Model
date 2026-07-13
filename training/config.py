@@ -29,7 +29,14 @@ from sklearn.preprocessing import StandardScaler
 # ======================================================
 
 class NumpyEncoder(json.JSONEncoder):
-    """Safely converts NumPy arrays and scalars to native Python types."""
+    """
+    JSON encoder capable of serializing NumPy objects.
+
+    Training artifacts frequently contain NumPy arrays and scalar types,
+    which are not directly serializable by Python's default JSON encoder.
+    This custom encoder converts them into native Python objects before
+    writing experiment metadata to disk.
+    """
     def default(self, obj: Any) -> Any:
         if isinstance(obj, np.ndarray):
             return obj.tolist()
@@ -44,7 +51,13 @@ class NumpyEncoder(json.JSONEncoder):
 
 @dataclass
 class DatasetSummary:
-    """Strongly typed summary metrics for the prepared dataset."""
+    """
+    Stores high-level information about the prepared datasets.
+
+    Used primarily for logging and experiment tracking so every training
+    run records exactly how many games and features were used.
+    """
+
     train_games: int
     validation_games: int
     test_games: int
@@ -56,7 +69,20 @@ class DatasetSummary:
 
 @dataclass
 class FeatureSet:
-    """Container for a model's specific dataset representation."""
+    """
+    Container holding every representation of a feature matrix for one model.
+
+    A model may require:
+
+    • Raw pandas DataFrames
+    • Standardized NumPy arrays
+    • A fitted scaler
+    • Feature names
+
+    Keeping everything together avoids passing dozens of variables
+    throughout the pipeline.
+    """
+
     X_train: pd.DataFrame
     X_val: pd.DataFrame
     X_test: pd.DataFrame
@@ -76,7 +102,13 @@ class FeatureSet:
 
 @dataclass
 class TrainingData:
-    """Return payload from the data preparation stage."""
+    """
+    Master container returned by the data preparation stage.
+
+    After feature engineering, every model receives its own FeatureSet,
+    while all models share the same target variables and dataset summary.
+    """
+
     mlp: FeatureSet
     xgb: FeatureSet
     lr: FeatureSet
@@ -95,7 +127,19 @@ class TrainingData:
 @dataclass
 class TrainingConfig:
     """
-    Stores all configurable parameters used throughout the training pipeline.
+    Central configuration object for the entire training pipeline.
+
+    Every configurable aspect of the project is defined here, including:
+
+    • Chronological dataset splits
+    • Feature selection rules
+    • Hyperparameter search spaces
+    • Cross-validation settings
+    • Explainability configuration
+
+    Centralizing these parameters guarantees reproducible experiments and
+    makes changing the training pipeline possible without modifying the
+    implementation code.
     """
 
     # ======================================================
@@ -109,6 +153,7 @@ class TrainingConfig:
     # Feature Configuration (Heterogeneous)
     # ======================================================
 
+
     lr_prefixes: list[str] = field(
         default_factory=lambda: ["DELTA_"]
     )
@@ -118,7 +163,7 @@ class TrainingConfig:
     )
     
     mlp_prefixes: list[str] = field(
-        default_factory=lambda: ["DELTA_", "EMBED_DELTA_"]
+        default_factory=lambda: ["DELTA_", "EMBED_"]
     )
 
     extra_features: list[str] = field(
@@ -205,7 +250,12 @@ class TrainingConfig:
 
 @dataclass
 class ModelArtifacts:
-    """Groups all artifacts specific to a single model architecture."""
+    """
+    Groups every artifact associated with one model architecture.
+
+    Separating artifacts by model keeps the pipeline modular and greatly
+    simplifies saving, evaluation, explainability, and ensemble creation.
+    """
     feature_set: FeatureSet | None = None
 
     model: BaseEstimator | None = None
@@ -215,7 +265,12 @@ class ModelArtifacts:
 @dataclass
 class TrainingArtifacts:
     """
-    Central state container for the training pipeline.
+    Central state object passed throughout the training pipeline.
+
+    Rather than returning dozens of independent objects between stages,
+    every component reads from and writes to this shared container.
+
+    It effectively acts as the project's in-memory workspace.
     """
 
     config: TrainingConfig
@@ -231,7 +286,13 @@ class TrainingArtifacts:
 
 
 def get_experiment_metadata() -> dict[str, str]:
-    """Returns metadata describing the current training run."""
+    """
+    Collects runtime information describing the current experiment.
+
+    This metadata is saved alongside every trained model to improve
+    reproducibility and simplify future comparisons between runs.
+    """
+    
     return {
         "run_timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "python_version": sys.version.split()[0],

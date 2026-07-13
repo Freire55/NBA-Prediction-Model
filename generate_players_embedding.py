@@ -20,6 +20,8 @@ import pandas as pd
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 
+from feature_engineering_players import calculate_game_score
+
 # ======================================================
 # Configuration
 # ======================================================
@@ -45,6 +47,67 @@ def parse_minutes(minutes: pd.Series) -> pd.Series:
         + pd.to_numeric(time_split[1], errors="coerce").fillna(0) / 60.0
     )
 
+def calculate_ts_perc(df: pd.DataFrame) -> pd.Series:
+    """Calculates True Shooting Percentage (TS%) for each player-game."""
+    numerator = df["PTS"]
+    denominator = 2 * (df["FGA"] + 0.44 * df["FTA"])
+    denominator = denominator.replace(0, np.nan)  
+    ts_perc = numerator / denominator
+    return ts_perc.fillna(0)
+
+def calculate_efg_perc(df: pd.DataFrame) -> pd.Series:
+    """Calculates Effective Field Goal Percentage (eFG%) for each player-game."""
+    numerator = df["FGM"] + 0.5 * df["FG3M"]
+    denominator = df["FGA"].replace(0, np.nan)
+    efg_perc = numerator / denominator
+    return efg_perc.fillna(0)
+
+def calculate_tov_perc(df: pd.DataFrame) -> pd.Series:
+    """Calculates Turnover Percentage (TOV%) for each player-game."""
+    numerator = df["TOV"]
+    denominator = df["FGA"] + 0.44 * df["FTA"] + df["TOV"]
+    denominator = denominator.replace(0, np.nan)
+    tov_perc = numerator / denominator
+    return tov_perc.fillna(0)
+
+def calculate_fantasy_score(df: pd.DataFrame) -> pd.Series:
+    """Calculates a simple fantasy score for each player-game."""
+    return (
+        df["PTS"]
+        + 1.2 * df["FGM"]
+        - 0.7 * df["FGA"]
+        - 0.4 * (df["FTA"] - df["FTM"])
+        + 0.7 * df["OREB"]
+        + 0.7 * df["DREB"]
+        + 1.5 * df["AST"]
+        + 2 * df["STL"]
+        + 2 * df["BLK"]
+        - 1 * df["TOV"]
+    )
+
+def calculate_ast_to_tov_ratio(df: pd.DataFrame) -> pd.Series:
+    """Calculates Assist-to-Turnover Ratio (AST/TO) for each player-game."""
+    denominator = df["TOV"].replace(0, np.nan)
+    ast_to_tov_ratio = df["AST"] / denominator
+    return ast_to_tov_ratio.fillna(0)
+
+def calculate_usg_proxy(df: pd.DataFrame) -> pd.Series:
+    """Calculates a Usage Proxy (Offensive Load per minute) for each player-game."""
+    numerator = df["FGA"] + 0.44 * df["FTA"] + df["TOV"]
+    denominator = df["MINUTES"].replace(0, np.nan)
+    return (numerator / denominator).fillna(0)
+
+def calculate_pie_proxy(df: pd.DataFrame) -> pd.Series:
+    """Calculates a Proxy for Player Impact per minute."""
+    player_stats = (
+        df["PTS"] + df["FGM"] + df["FTM"] - df["FGA"] - df["FTA"] 
+        + df["DREB"] + (df["OREB"] / 2) + df["AST"] + df["STL"] 
+        + (df["BLK"] / 2) - df["PF"] - df["TOV"]
+    )
+    denominator = df["MINUTES"].replace(0, np.nan)
+    return (player_stats / denominator).fillna(0)
+
+
 def main():
     logger.info("Loading raw player logs for embedding generation...")
     df = pd.read_csv(DATA_DIR / INPUT_FILE)
@@ -58,7 +121,7 @@ def main():
     df = df.drop_duplicates(subset=["PLAYER_ID", "GAME_DATE"], keep="last")
 
     df["MINUTES"] = parse_minutes(df["MIN"])
-    valid_mins = df["MINUTES"] >= 1.0
+    valid_mins = df["MINUTES"] >= 5.0
 
     # 1. Expand the feature space (14 distinct per-minute metrics)
     logger.info("Calculating per-minute productivity vectors...")
@@ -73,6 +136,22 @@ def main():
         col_name = f"{stat}_PER_MIN"
         df.loc[valid_mins, col_name] = df[stat] / df["MINUTES"]
         stat_cols.append(col_name)
+
+    df["TS_PERC"] = calculate_ts_perc(df)
+    df["EFG_PERC"] = calculate_efg_perc(df)
+    df["TOV_PERC"] = calculate_tov_perc(df)
+    df["FANTASY_SCORE"] = calculate_fantasy_score(df)
+    df["GAME_SCORE"] = calculate_game_score(df)
+    df["USG_PROXY"] = calculate_usg_proxy(df)
+    df["AST_TO_TOV_RATIO"] = calculate_ast_to_tov_ratio(df)
+    df["PIE_PROXY"] = calculate_pie_proxy(df)
+
+    advanced_stats = [
+        "TS_PERC", "EFG_PERC", "TOV_PERC", "FANTASY_SCORE", 
+        "GAME_SCORE", "USG_PROXY", "PIE_PROXY", "AST_TO_TOV_RATIO"
+    ]
+
+    stat_cols.extend(advanced_stats)
 
     df[stat_cols] = df[stat_cols].fillna(0)
 
@@ -99,7 +178,7 @@ def main():
     scaler.fit(df.loc[train_mask, rolling_cols].values)
     X_scaled = scaler.transform(df[rolling_cols].values)
 
-    pca = PCA(n_components=2, random_state=42)
+    pca = PCA(n_components=3, random_state=42)
     pca.fit(X_scaled[train_mask])
     
     embeddings = pca.transform(X_scaled)

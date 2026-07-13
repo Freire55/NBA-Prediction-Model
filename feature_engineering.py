@@ -24,7 +24,7 @@ from pathlib import Path
 DATA_DIR = Path(__file__).resolve().parent / "data"
 
 # Rolling feature parameters
-ROLLING_WINDOW = 5
+ROLLING_WINDOW = 8
 
 # Elo parameters
 INITIAL_ELO = 1500

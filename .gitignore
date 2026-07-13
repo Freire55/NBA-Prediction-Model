@@ -14,4 +14,6 @@ data
 
 .pytest_cache/
 
-Progress.md
+a_explanation.md
+
+fixes.txt
