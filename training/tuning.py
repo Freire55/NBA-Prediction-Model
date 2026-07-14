@@ -166,6 +166,7 @@ def tune_base_models(
         clone(mlp_search.best_estimator_),
         method="sigmoid",
         cv=tscv,
+        n_jobs=-1
     )
     mlp_calibrated.fit(
         data.mlp.X_train_processed,
@@ -176,6 +177,7 @@ def tune_base_models(
         clone(xgb_search.best_estimator_),
         method="sigmoid",
         cv=tscv,
+        n_jobs=-1
     )
     xgb_calibrated.fit(
         data.xgb.X_train,
@@ -186,6 +188,7 @@ def tune_base_models(
         clone(lr_search.best_estimator_),
         method="sigmoid",
         cv=tscv,
+        n_jobs=-1
     )
     lr_calibrated.fit(
         data.lr.X_train_processed,

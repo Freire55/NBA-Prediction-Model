@@ -57,6 +57,14 @@ def load_and_sort_data(filepath: Path) -> pd.DataFrame:
     
     return df
 
+def rolling_mean(series: pd.Series, rolling_window: int = ROLLING_WINDOW) -> pd.Series:
+    """Computes a rolling mean using only prior observations."""
+    return series.shift(1).rolling(rolling_window, min_periods=1).mean()
+
+def ewma(series: pd.Series, span: int = ROLLING_WINDOW) -> pd.Series:
+    """Computes an exponentially weighted moving average using only prior observations."""
+    return series.shift(1).ewm(adjust=False, span=span).mean()
+
 def add_schedule_features(df: pd.DataFrame) -> pd.DataFrame:
     """Engineers fatigue and schedule density flags."""
     team_groups = df.groupby('TEAM_ABBREVIATION')

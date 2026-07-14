@@ -74,10 +74,13 @@ def calculate_game_score(df: pd.DataFrame) -> pd.Series:
     )
 
 
-def rolling_mean(series: pd.Series) -> pd.Series:
+def rolling_mean(series: pd.Series, rolling_window: int = ROLLING_WINDOW) -> pd.Series:
     """Computes a rolling mean using only prior observations."""
-    return series.shift(1).rolling(ROLLING_WINDOW, min_periods=1).mean()
+    return series.shift(1).rolling(rolling_window, min_periods=1).mean()
 
+def ewma(series: pd.Series, span: int = ROLLING_WINDOW) -> pd.Series:
+    """Computes an exponentially weighted moving average using only prior observations."""
+    return series.shift(1).ewm(adjust=False, span=span).mean()
 
 # ======================================================
 # Main Pipeline
@@ -118,8 +121,13 @@ def main() -> None:
     player_groups = logs_df.groupby("PLAYER_ID")
 
     logs_df = logs_df.assign(
-        PLAYER_FORM_ROLLING=player_groups["GAME_SCORE"].transform(rolling_mean),
-        MINUTES_ROLLING=player_groups["MINUTES_NUM"].transform(rolling_mean),
+        PLAYER_FORM_ROLLING_3=player_groups["GAME_SCORE"].transform(rolling_mean, rolling_window=3),
+        PLAYER_FORM_ROLLING_5=player_groups["GAME_SCORE"].transform(rolling_mean, rolling_window=5),
+        PLAYER_FORM_ROLLING_10=player_groups["GAME_SCORE"].transform(rolling_mean, rolling_window=10),
+
+        FATIGUE_EWMA_MINUTES_3 = player_groups["MINUTES_NUM"].transform(lambda x: ewma(x, span=3)),
+        FATIGUE_EWMA_MINUTES_5 = player_groups["MINUTES_NUM"].transform(lambda x: ewma(x, span=5)),
+        FATIGUE_EWMA_MINUTES_10 = player_groups["MINUTES_NUM"].transform(lambda x: ewma(x, span=10)),
     )
 
     # ======================================================
@@ -133,8 +141,16 @@ def main() -> None:
         how="left"
     )
 
-    logs_df["MINUTES_ROLLING"] = logs_df["MINUTES_ROLLING"].fillna(0)
-    logs_df["PLAYER_FORM_ROLLING"] = logs_df["PLAYER_FORM_ROLLING"].fillna(0)
+    rolling_cols = [
+        "PLAYER_FORM_ROLLING_3",
+        "PLAYER_FORM_ROLLING_5",
+        "PLAYER_FORM_ROLLING_10",
+        "FATIGUE_EWMA_MINUTES_3",
+        "FATIGUE_EWMA_MINUTES_5",
+        "FATIGUE_EWMA_MINUTES_10",
+    ]
+
+    logs_df[rolling_cols] = logs_df[rolling_cols].fillna(0)
     
     logs_df["EMBED_1"] = logs_df["EMBED_1"].fillna(0)
     logs_df["EMBED_2"] = logs_df["EMBED_2"].fillna(0)
@@ -142,13 +158,29 @@ def main() -> None:
     logs_df["EMBED_4"] = logs_df["EMBED_4"].fillna(0)
 
     logs_df["EXPECTED_IMPACT"] = (
-        logs_df["PLAYER_FORM_ROLLING"] * logs_df["MINUTES_ROLLING"]
+        logs_df["PLAYER_FORM_ROLLING_5"] * logs_df["FATIGUE_EWMA_MINUTES_5"]
     )
-    
-    logs_df["EXPECTED_EMBED_1"] = logs_df["EMBED_1"] * logs_df["MINUTES_ROLLING"]
-    logs_df["EXPECTED_EMBED_2"] = logs_df["EMBED_2"] * logs_df["MINUTES_ROLLING"]
-    logs_df["EXPECTED_EMBED_3"] = logs_df["EMBED_3"] * logs_df["MINUTES_ROLLING"]
-    logs_df["EXPECTED_EMBED_4"] = logs_df["EMBED_4"] * logs_df["MINUTES_ROLLING"]
+
+    logs_df["FATIGUE_IMPORTANCE_3"] = (
+        logs_df["PLAYER_FORM_ROLLING_3"] *
+        logs_df["FATIGUE_EWMA_MINUTES_3"]
+    )
+
+    logs_df["FATIGUE_IMPORTANCE_5"] = (
+        logs_df["PLAYER_FORM_ROLLING_5"] *
+        logs_df["FATIGUE_EWMA_MINUTES_5"]
+    )
+
+    logs_df["FATIGUE_IMPORTANCE_10"] = (
+        logs_df["PLAYER_FORM_ROLLING_10"] *
+        logs_df["FATIGUE_EWMA_MINUTES_10"]
+    )
+
+
+    logs_df["EXPECTED_EMBED_1"] = logs_df["EMBED_1"] * logs_df["FATIGUE_EWMA_MINUTES_5"]
+    logs_df["EXPECTED_EMBED_2"] = logs_df["EMBED_2"] * logs_df["FATIGUE_EWMA_MINUTES_5"]
+    logs_df["EXPECTED_EMBED_3"] = logs_df["EMBED_3"] * logs_df["FATIGUE_EWMA_MINUTES_5"]
+    logs_df["EXPECTED_EMBED_4"] = logs_df["EMBED_4"] * logs_df["FATIGUE_EWMA_MINUTES_5"]
 
     # ======================================================
     # Aggregate to the team level (Named Aggregation)
@@ -162,7 +194,34 @@ def main() -> None:
             ACTIVE_ROSTER_FORM_STD=("EXPECTED_IMPACT", "std"),
             ACTIVE_ROSTER_FORM_MAX=("EXPECTED_IMPACT", "max"),
 
-            TOTAL_EXPECTED_MINUTES=("MINUTES_ROLLING", "sum"),
+            TOTAL_EXPECTED_MINUTES=("FATIGUE_EWMA_MINUTES_5", "sum"),
+
+            FATIGUE_EWMA_MINUTES_3_SUM=("FATIGUE_EWMA_MINUTES_3", "sum"),
+            FATIGUE_EWMA_MINUTES_3_STD=("FATIGUE_EWMA_MINUTES_3", "std"),
+            FATIGUE_EWMA_MINUTES_3_MAX=("FATIGUE_EWMA_MINUTES_3", "max"),
+            FATIGUE_EWMA_MINUTES_3_MEAN=("FATIGUE_EWMA_MINUTES_3", "mean"),
+
+            FATIGUE_EWMA_MINUTES_5_SUM=("FATIGUE_EWMA_MINUTES_5", "sum"),
+            FATIGUE_EWMA_MINUTES_5_STD=("FATIGUE_EWMA_MINUTES_5", "std"),
+            FATIGUE_EWMA_MINUTES_5_MAX=("FATIGUE_EWMA_MINUTES_5", "max"),
+            FATIGUE_EWMA_MINUTES_5_MEAN=("FATIGUE_EWMA_MINUTES_5", "mean"),
+
+            FATIGUE_EWMA_MINUTES_10_SUM=("FATIGUE_EWMA_MINUTES_10", "sum"),
+            FATIGUE_EWMA_MINUTES_10_STD=("FATIGUE_EWMA_MINUTES_10", "std"),
+            FATIGUE_EWMA_MINUTES_10_MAX=("FATIGUE_EWMA_MINUTES_10", "max"),
+            FATIGUE_EWMA_MINUTES_10_MEAN=("FATIGUE_EWMA_MINUTES_10", "mean"),
+
+            FATIGUE_IMPORTANCE_3_SUM=("FATIGUE_IMPORTANCE_3", "sum"),
+            FATIGUE_IMPORTANCE_3_STD=("FATIGUE_IMPORTANCE_3", "std"),
+            FATIGUE_IMPORTANCE_3_MAX=("FATIGUE_IMPORTANCE_3", "max"),
+
+            FATIGUE_IMPORTANCE_5_SUM=("FATIGUE_IMPORTANCE_5", "sum"),
+            FATIGUE_IMPORTANCE_5_STD=("FATIGUE_IMPORTANCE_5", "std"),
+            FATIGUE_IMPORTANCE_5_MAX=("FATIGUE_IMPORTANCE_5", "max"),
+
+            FATIGUE_IMPORTANCE_10_SUM=("FATIGUE_IMPORTANCE_10", "sum"),
+            FATIGUE_IMPORTANCE_10_STD=("FATIGUE_IMPORTANCE_10", "std"),
+            FATIGUE_IMPORTANCE_10_MAX=("FATIGUE_IMPORTANCE_10", "max"),
 
             EXPECTED_EMBED_1_SUM=("EXPECTED_EMBED_1", "sum"),
             EXPECTED_EMBED_1_MAX=("EXPECTED_EMBED_1", "max"),
@@ -179,6 +238,7 @@ def main() -> None:
             EXPECTED_EMBED_4_SUM=("EXPECTED_EMBED_4", "sum"),
             EXPECTED_EMBED_4_MAX=("EXPECTED_EMBED_4", "max"),
             EXPECTED_EMBED_4_STD=("EXPECTED_EMBED_4", "std"),
+
 
             EMBED_1_MAX=("EMBED_1", "max"),
             EMBED_1_STD=("EMBED_1", "std"),
@@ -198,6 +258,14 @@ def main() -> None:
     roster_agg["ACTIVE_ROSTER_FORM_STD"] = (
         roster_agg["ACTIVE_ROSTER_FORM_STD"].fillna(DEFAULT_VALUE)
     )
+
+    fatigue_cols = [
+        "FATIGUE_IMPORTANCE_3_STD",
+        "FATIGUE_IMPORTANCE_5_STD",
+        "FATIGUE_IMPORTANCE_10_STD",
+    ]
+
+    roster_agg[fatigue_cols] = roster_agg[fatigue_cols].fillna(DEFAULT_VALUE)
 
     roster_agg["ACTIVE_ROSTER_STAR_SHARE"] = (
         roster_agg["ACTIVE_ROSTER_FORM_MAX"] / roster_agg["ACTIVE_ROSTER_FORM_SUM"]
@@ -274,6 +342,96 @@ def main() -> None:
         - matchups_df["AWAY_ACTIVE_ROSTER_STAR_SHARE"]
     )
 
+
+    matchups_df["DELTA_FATIGUE_EWMA_MINUTES_3_SUM"] = (
+        matchups_df["HOME_FATIGUE_EWMA_MINUTES_3_SUM"]
+        - matchups_df["AWAY_FATIGUE_EWMA_MINUTES_3_SUM"]
+    )
+    matchups_df["DELTA_FATIGUE_EWMA_MINUTES_3_STD"] = (
+        matchups_df["HOME_FATIGUE_EWMA_MINUTES_3_STD"]
+        - matchups_df["AWAY_FATIGUE_EWMA_MINUTES_3_STD"]
+    )
+    matchups_df["DELTA_FATIGUE_EWMA_MINUTES_3_MAX"] = (
+        matchups_df["HOME_FATIGUE_EWMA_MINUTES_3_MAX"]
+        - matchups_df["AWAY_FATIGUE_EWMA_MINUTES_3_MAX"]
+    )
+    matchups_df["DELTA_FATIGUE_EWMA_MINUTES_3_MEAN"] = (
+        matchups_df["HOME_FATIGUE_EWMA_MINUTES_3_MEAN"]
+        - matchups_df["AWAY_FATIGUE_EWMA_MINUTES_3_MEAN"]
+    )
+
+    matchups_df["DELTA_FATIGUE_EWMA_MINUTES_5_SUM"] = (
+        matchups_df["HOME_FATIGUE_EWMA_MINUTES_5_SUM"]
+        - matchups_df["AWAY_FATIGUE_EWMA_MINUTES_5_SUM"]
+    )
+    matchups_df["DELTA_FATIGUE_EWMA_MINUTES_5_STD"] = (
+        matchups_df["HOME_FATIGUE_EWMA_MINUTES_5_STD"]
+        - matchups_df["AWAY_FATIGUE_EWMA_MINUTES_5_STD"]
+    )
+    matchups_df["DELTA_FATIGUE_EWMA_MINUTES_5_MAX"] = (
+        matchups_df["HOME_FATIGUE_EWMA_MINUTES_5_MAX"]
+        - matchups_df["AWAY_FATIGUE_EWMA_MINUTES_5_MAX"]
+    )
+    matchups_df["DELTA_FATIGUE_EWMA_MINUTES_5_MEAN"] = (
+        matchups_df["HOME_FATIGUE_EWMA_MINUTES_5_MEAN"]
+        - matchups_df["AWAY_FATIGUE_EWMA_MINUTES_5_MEAN"]
+    )
+
+    matchups_df["DELTA_FATIGUE_EWMA_MINUTES_10_SUM"] = (
+        matchups_df["HOME_FATIGUE_EWMA_MINUTES_10_SUM"]
+        - matchups_df["AWAY_FATIGUE_EWMA_MINUTES_10_SUM"]
+    )
+    matchups_df["DELTA_FATIGUE_EWMA_MINUTES_10_STD"] = (
+        matchups_df["HOME_FATIGUE_EWMA_MINUTES_10_STD"]
+        - matchups_df["AWAY_FATIGUE_EWMA_MINUTES_10_STD"]
+    )
+    matchups_df["DELTA_FATIGUE_EWMA_MINUTES_10_MAX"] = (
+        matchups_df["HOME_FATIGUE_EWMA_MINUTES_10_MAX"]
+        - matchups_df["AWAY_FATIGUE_EWMA_MINUTES_10_MAX"]
+    )
+    matchups_df["DELTA_FATIGUE_EWMA_MINUTES_10_MEAN"] = (
+        matchups_df["HOME_FATIGUE_EWMA_MINUTES_10_MEAN"]
+        - matchups_df["AWAY_FATIGUE_EWMA_MINUTES_10_MEAN"]
+    )
+
+    matchups_df["DELTA_FATIGUE_IMPORTANCE_3_SUM"] = (
+        matchups_df["HOME_FATIGUE_IMPORTANCE_3_SUM"]
+        - matchups_df["AWAY_FATIGUE_IMPORTANCE_3_SUM"]
+    )
+    matchups_df["DELTA_FATIGUE_IMPORTANCE_3_STD"] = (
+        matchups_df["HOME_FATIGUE_IMPORTANCE_3_STD"]
+        - matchups_df["AWAY_FATIGUE_IMPORTANCE_3_STD"]
+    )
+    matchups_df["DELTA_FATIGUE_IMPORTANCE_3_MAX"] = (
+        matchups_df["HOME_FATIGUE_IMPORTANCE_3_MAX"]
+        - matchups_df["AWAY_FATIGUE_IMPORTANCE_3_MAX"]
+    )
+
+    matchups_df["DELTA_FATIGUE_IMPORTANCE_5_SUM"] = (
+        matchups_df["HOME_FATIGUE_IMPORTANCE_5_SUM"]
+        - matchups_df["AWAY_FATIGUE_IMPORTANCE_5_SUM"]
+    )
+    matchups_df["DELTA_FATIGUE_IMPORTANCE_5_STD"] = (
+        matchups_df["HOME_FATIGUE_IMPORTANCE_5_STD"]
+        - matchups_df["AWAY_FATIGUE_IMPORTANCE_5_STD"]
+    )
+    matchups_df["DELTA_FATIGUE_IMPORTANCE_5_MAX"] = (
+        matchups_df["HOME_FATIGUE_IMPORTANCE_5_MAX"]
+        - matchups_df["AWAY_FATIGUE_IMPORTANCE_5_MAX"]
+    )
+
+    matchups_df["DELTA_FATIGUE_IMPORTANCE_10_SUM"] = (
+        matchups_df["HOME_FATIGUE_IMPORTANCE_10_SUM"]
+        - matchups_df["AWAY_FATIGUE_IMPORTANCE_10_SUM"]
+    )
+    matchups_df["DELTA_FATIGUE_IMPORTANCE_10_STD"] = (
+        matchups_df["HOME_FATIGUE_IMPORTANCE_10_STD"]
+        - matchups_df["AWAY_FATIGUE_IMPORTANCE_10_STD"]
+    )
+    matchups_df["DELTA_FATIGUE_IMPORTANCE_10_MAX"] = (
+        matchups_df["HOME_FATIGUE_IMPORTANCE_10_MAX"]
+        - matchups_df["AWAY_FATIGUE_IMPORTANCE_10_MAX"]
+    )
     
 
     matchups_df["EMBED_DELTA_1_SUM"] = (
@@ -391,6 +549,7 @@ def main() -> None:
     # Drop intermediate embedding columns so XGBoost 
     # doesn't accidentally absorb them via 'HOME_' prefixes.
     # ------------------------------------------------------
+
     matchups_df.drop(
         columns=[
             "HOME_TOTAL_EXPECTED_MINUTES",
