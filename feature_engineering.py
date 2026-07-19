@@ -25,6 +25,7 @@ DATA_DIR = Path(__file__).resolve().parent / "data"
 
 # Rolling feature parameters
 ROLLING_WINDOW = 8
+EWMA_SPANS = (3, 5, 10)
 
 # Elo parameters
 INITIAL_ELO = 1500
@@ -57,13 +58,22 @@ def load_and_sort_data(filepath: Path) -> pd.DataFrame:
     
     return df
 
+
+
 def rolling_mean(series: pd.Series, rolling_window: int = ROLLING_WINDOW) -> pd.Series:
     """Computes a rolling mean using only prior observations."""
     return series.shift(1).rolling(rolling_window, min_periods=1).mean()
 
+
+def rolling_sum(series: pd.Series, rolling_window: int = ROLLING_WINDOW) -> pd.Series:
+    return series.shift(1).rolling(rolling_window, min_periods=1).sum()
+
+
 def ewma(series: pd.Series, span: int = ROLLING_WINDOW) -> pd.Series:
     """Computes an exponentially weighted moving average using only prior observations."""
     return series.shift(1).ewm(adjust=False, span=span).mean()
+
+
 
 def add_schedule_features(df: pd.DataFrame) -> pd.DataFrame:
     """Engineers fatigue and schedule density flags."""
@@ -87,22 +97,51 @@ def add_schedule_features(df: pd.DataFrame) -> pd.DataFrame:
     
     return df
 
+
+
 def add_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
     """Calculates chronologically pure rolling averages and strength of schedule."""
     team_groups = df.groupby('TEAM_ABBREVIATION')
     
     df['POSSESSIONS'] = df['FGA'] + POSSESSION_FT_WEIGHT * df['FTA'] - df['OREB'] + df['TOV']
 
-    df[f'ROLLING_PTS_{ROLLING_WINDOW}'] = team_groups['PTS'].transform(lambda x: x.shift(1).rolling(ROLLING_WINDOW, min_periods=1).sum())
-    df[f'ROLLING_POSS_{ROLLING_WINDOW}'] = team_groups['POSSESSIONS'].transform(lambda x: x.shift(1).rolling(ROLLING_WINDOW, min_periods=1).sum())
+    df[f'ROLLING_PTS_{ROLLING_WINDOW}'] = team_groups['PTS'].transform(rolling_sum)
+    df[f'ROLLING_POSS_{ROLLING_WINDOW}'] = team_groups['POSSESSIONS'].transform(rolling_sum)
     
     df['ROLLING_OFF_RATING'] = (df[f'ROLLING_PTS_{ROLLING_WINDOW}'] / df[f'ROLLING_POSS_{ROLLING_WINDOW}']) * 100
     df['ROLLING_OFF_RATING'] = df['ROLLING_OFF_RATING'].fillna(DEFAULT_OFF_RATING)
 
+    df["OFF_RATING_EWMA_3"] = (
+        team_groups["ROLLING_OFF_RATING"]
+        .transform(lambda x: ewma(x, span=3))
+    )
+
+    df["OFF_RATING_EWMA_5"] = (
+        team_groups["ROLLING_OFF_RATING"]
+        .transform(lambda x: ewma(x, span=5))
+    )
+
+    df["OFF_RATING_EWMA_10"] = (
+        team_groups["ROLLING_OFF_RATING"]
+        .transform(lambda x: ewma(x, span=10))
+    )
+
     # Standardize historical memory for Z-stats
-    z_columns = [col for col in df.columns if col.startswith('Z_')]
+    z_columns = [col for col in df.columns if col.startswith("Z_")]
+
     for col in z_columns:
-        df[f"{col}_ROLLING_{ROLLING_WINDOW}"] = team_groups[col].transform(lambda x: x.shift(1).rolling(ROLLING_WINDOW, min_periods=1).mean())
+        df = df.copy()
+
+        df[f"{col}_ROLLING_{ROLLING_WINDOW}"] = (
+            team_groups[col].transform(rolling_mean)
+        )
+
+        for span in EWMA_SPANS:
+            df[f"{col}_EWMA_{span}"] = (
+                team_groups[col]
+                .transform(lambda x, s=span: ewma(x, span=s))
+            )
+
 
     # Map past opponent strength
     df['OPP_ABBREVIATION'] = df['MATCHUP'].str[-3:]
@@ -113,9 +152,33 @@ def add_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.drop(columns=['TEAM_ABBREVIATION_DROP'])
     df['OPP_PRE_GAME_STRENGTH'] = df['OPP_PRE_GAME_STRENGTH'].fillna(0)
     
-    df[f'SOS_ROLLING_{ROLLING_WINDOW}'] = df.groupby('TEAM_ABBREVIATION')['OPP_PRE_GAME_STRENGTH'].transform(lambda x: x.shift(1).rolling(ROLLING_WINDOW, min_periods=1).mean()).fillna(0)
+    df[f'SOS_ROLLING_{ROLLING_WINDOW}'] = (
+        df.groupby("TEAM_ABBREVIATION")["OPP_PRE_GAME_STRENGTH"]
+        .transform(rolling_mean)
+        .fillna(0)
+    )
+
+    df["SOS_EWMA_3"] = (
+        df.groupby("TEAM_ABBREVIATION")["OPP_PRE_GAME_STRENGTH"]
+        .transform(lambda x: ewma(x, span=3))
+        .fillna(0)
+    )
+
+    df["SOS_EWMA_5"] = (
+        df.groupby("TEAM_ABBREVIATION")["OPP_PRE_GAME_STRENGTH"]
+        .transform(lambda x: ewma(x, span=5))
+        .fillna(0)
+    )
+
+    df["SOS_EWMA_10"] = (
+        df.groupby("TEAM_ABBREVIATION")["OPP_PRE_GAME_STRENGTH"]
+        .transform(lambda x: ewma(x, span=10))
+        .fillna(0)
+    )
 
     return df
+
+
 
 def simulate_elo(df: pd.DataFrame) -> pd.DataFrame:
     """Simulates a continuous Elo rating timeline using pure Python iterations for speed."""
@@ -172,6 +235,9 @@ def simulate_elo(df: pd.DataFrame) -> pd.DataFrame:
     df = df.merge(elo_df, on=['GAME_ID', 'TEAM_ABBREVIATION'], how='left')
     return df
 
+
+
+
 def build_matchups(df: pd.DataFrame) -> pd.DataFrame:
     """Combines home and away rows into single matchup-level observations."""
     home_df = df[df['MATCHUP'].str.contains(' vs. ')].copy().add_prefix('HOME_')
@@ -190,8 +256,17 @@ def build_matchups(df: pd.DataFrame) -> pd.DataFrame:
     matchups_df[f'DELTA_SOS_ROLLING_{ROLLING_WINDOW}'] = matchups_df[f'HOME_SOS_ROLLING_{ROLLING_WINDOW}'] - matchups_df[f'AWAY_SOS_ROLLING_{ROLLING_WINDOW}']
     matchups_df['DELTA_ROLLING_OFF_RATING'] = matchups_df['HOME_ROLLING_OFF_RATING'] - matchups_df['AWAY_ROLLING_OFF_RATING']
 
-    z_rolling_cols = [col.replace("HOME_", "") for col in home_df.columns if col.startswith("HOME_Z_") and col.endswith(f"_ROLLING_{ROLLING_WINDOW}")]
-    for col in z_rolling_cols:
+    z_feature_cols = [
+        col.replace("HOME_", "")
+        for col in home_df.columns
+        if col.startswith("HOME_Z_")
+        and (
+            "_ROLLING_" in col
+            or "_EWMA_" in col
+        )
+    ]    
+    
+    for col in z_feature_cols:
         delta_col = f"DELTA_{col}"
         matchups_df[delta_col] = matchups_df[f"HOME_{col}"] - matchups_df[f"AWAY_{col}"]
 

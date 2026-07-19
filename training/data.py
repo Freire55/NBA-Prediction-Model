@@ -47,19 +47,16 @@ def get_model_features(
     numeric_cols = set(df.select_dtypes(include=["number"]).columns)
     safe_extra = [col for col in config.extra_features if col in numeric_cols]
     
-    # ---------------------------------------------------------
-    # CRITICAL: Prevent the Target Column from becoming a feature!
-    # ---------------------------------------------------------
     exclude_cols = {TARGET_COLUMN}
     
-    lr_features = [
+    lr_raw = [
         col for col in df.columns 
         if any(col.startswith(p) for p in config.lr_prefixes)
         and col in numeric_cols
         and col not in exclude_cols
     ] + safe_extra
     
-    xgb_features = [
+    xgb_raw = [
         col for col in df.columns 
         if any(col.startswith(p) for p in config.xgb_prefixes) 
         and "_Z_" not in col
@@ -67,17 +64,21 @@ def get_model_features(
         and col not in exclude_cols
     ] + safe_extra
     
-    mlp_features = [
+    mlp_raw = [
         col for col in df.columns 
         if any(col.startswith(p) for p in config.mlp_prefixes)
         and col in numeric_cols
         and col not in exclude_cols
     ] + safe_extra
 
+    lr_removals = set(config.features_to_remove.get("lr", []))
+    xgb_removals = set(config.features_to_remove.get("xgb", []))
+    mlp_removals = set(config.features_to_remove.get("mlp", []))
+
     return {
-        "mlp": list(dict.fromkeys(mlp_features)),
-        "xgb": list(dict.fromkeys(xgb_features)),
-        "lr": list(dict.fromkeys(lr_features)),
+        "mlp": [f for f in dict.fromkeys(mlp_raw) if f not in mlp_removals],
+        "xgb": [f for f in dict.fromkeys(xgb_raw) if f not in xgb_removals],
+        "lr":  [f for f in dict.fromkeys(lr_raw) if f not in lr_removals],
     }
 
 
