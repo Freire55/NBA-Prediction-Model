@@ -11,7 +11,9 @@ This module centralizes:
 """
 
 import json
+import os
 import platform
+import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -297,17 +299,54 @@ class TrainingArtifacts:
     ensemble_weights: np.ndarray | None = None
 
 
-def get_experiment_metadata() -> dict[str, str]:
+def get_experiment_metadata(data_dir: Path | None = None) -> dict[str, Any]:
     """
     Collects runtime information describing the current experiment.
 
     This metadata is saved alongside every trained model to improve
     reproducibility and simplify future comparisons between runs.
     """
-    
-    return {
+    git_info: dict[str, Any] = {
+        "git_commit": "unknown",
+        "git_branch": "unknown",
+        "git_dirty": False,
+    }
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+        branch = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+        dirty = bool(
+            subprocess.run(
+                ["git", "status", "--porcelain"], capture_output=True, text=True, check=True
+            ).stdout.strip()
+        )
+        git_info = {
+            "git_commit": commit,
+            "git_branch": branch,
+            "git_dirty": dirty,
+        }
+    except Exception:
+        pass
+
+    metadata: dict[str, Any] = {
         "run_timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "python_version": sys.version.split()[0],
         "platform": platform.platform(),
+        "cpu_count": os.cpu_count() or 1,
         "dataset_version": "v2.0-heterogeneous",
+        **git_info,
     }
+
+    if data_dir is not None:
+        dataset_path = Path(data_dir) / "ml_ready_matchups_players.csv"
+        if dataset_path.exists():
+            import hashlib
+            hasher = hashlib.sha256()
+            with open(dataset_path, "rb") as f:
+                hasher.update(f.read(1024 * 1024))
+            metadata["dataset_fingerprint_sha256_1mb"] = hasher.hexdigest()
+
+    return metadata

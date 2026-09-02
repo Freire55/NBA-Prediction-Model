@@ -10,7 +10,8 @@ models/**/*_cv_results.csv
 
 models/run_*
 
-data
+data/*.csv
+
 
 .pytest_cache/
 

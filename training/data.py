@@ -47,7 +47,17 @@ def get_model_features(
     numeric_cols = set(df.select_dtypes(include=["number"]).columns)
     safe_extra = [col for col in config.extra_features if col in numeric_cols]
     
-    exclude_cols = {TARGET_COLUMN}
+    post_game_stats = [
+        "PTS", "FGM", "FGA", "FG_PCT", "FG3M", "FG3A", "FG3_PCT",
+        "FTM", "FTA", "FT_PCT", "OREB", "DREB", "REB", "AST", "STL",
+        "BLK", "TOV", "PF", "PLUS_MINUS", "POSSESSIONS", "WL", "WIN",
+    ]
+    post_game_cols = {
+        f"{prefix}{stat}"
+        for prefix in ["HOME_", "AWAY_", "DELTA_"]
+        for stat in post_game_stats
+    }
+    exclude_cols = {TARGET_COLUMN} | post_game_cols
     
     lr_raw = [
         col for col in df.columns 

@@ -47,3 +47,19 @@ def test_json_serialization_handles_numpy_types(tmp_path):
     assert loaded_data["array_val"] == [1, 2, 3]
     assert isinstance(loaded_data["int_val"], int)
     assert loaded_data["int_val"] == 42
+
+
+def test_get_experiment_metadata_reproducibility():
+    """Verifies that experiment metadata collects git info, environment details, and dataset fingerprints."""
+    from training.config import get_experiment_metadata
+    
+    metadata = get_experiment_metadata(Path("data"))
+    
+    assert "run_timestamp" in metadata
+    assert "python_version" in metadata
+    assert "platform" in metadata
+    assert "cpu_count" in metadata
+    assert "git_commit" in metadata
+    assert "git_branch" in metadata
+    assert "git_dirty" in metadata
+    assert "dataset_version" in metadata

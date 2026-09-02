@@ -75,12 +75,13 @@ def save_json_artifacts(
     ensemble_formula,
     metrics_dict,
     output_dir,
+    data_dir=None,
 ):
     """Saves JSON metadata produced during training."""
 
     json_artifacts = {
         "training_config.json": config.to_dict(),
-        "metadata.json": get_experiment_metadata(),
+        "metadata.json": get_experiment_metadata(data_dir),
         "dataset_summary.json": asdict(dataset_summary),
         "ensemble_formula.json": ensemble_formula,
         "test_metrics.json": metrics_dict,
@@ -286,6 +287,7 @@ def main() -> None:
         ensemble_formula,
         metrics_dict,
         output_dir,
+        data_dir=data_dir,
     )
 
     save_model_artifacts(artifacts)
