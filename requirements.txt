@@ -4,3 +4,7 @@ nba_api
 scikit-learn
 xgboost
 scipy
+matplotlib
+shap
+joblib
+pytest

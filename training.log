@@ -1,0 +1,396 @@
+[2026-08-17 00:25:19] INFO: 
+=========================================
+[2026-08-17 00:25:19] INFO:   MODEL-SPECIFIC BACKWARD SELECTION (v5) 
+[2026-08-17 00:25:19] INFO: =========================================
+
+[2026-08-17 00:25:19] INFO: [Phase 1] Establishing Heterogeneous Baseline...
+[2026-08-17 00:25:20] INFO:       Train: 22943 | Val: 2139 | Test: 6140
+[2026-08-17 00:25:20] INFO:       Features -> LR: 111 | XGB: 101 | MLP: 135
+[2026-08-17 00:31:39] INFO:       Best MLP CV Log Loss: 0.6017
+[2026-08-17 00:31:39] INFO:       Best XGBoost CV Log Loss: 0.5919
+[2026-08-17 00:31:39] INFO:       Best Logistic Regression CV Log Loss: 0.5936
+[2026-08-17 00:31:39] INFO:       Applying cross-validated calibration to base models...
+[2026-08-17 00:56:45] INFO: 
+=========================================
+[2026-08-17 00:56:45] INFO:   MODEL-SPECIFIC BACKWARD SELECTION (v5) 
+[2026-08-17 00:56:45] INFO: =========================================
+
+[2026-08-17 00:56:45] INFO: [Phase 1] Establishing Heterogeneous Baseline...
+[2026-08-17 00:56:46] INFO:       Train: 22943 | Val: 2139 | Test: 6140
+[2026-08-17 00:56:46] INFO:       Features -> LR: 111 | XGB: 101 | MLP: 135
+[2026-08-17 00:58:41] INFO: 
+=========================================
+[2026-08-17 00:58:41] INFO:   MODEL-SPECIFIC BACKWARD SELECTION (v5) 
+[2026-08-17 00:58:41] INFO: =========================================
+
+[2026-08-17 00:58:41] INFO: [Phase 1] Establishing Heterogeneous Baseline...
+[2026-08-17 00:58:43] INFO:       Train: 22943 | Val: 2139 | Test: 6140
+[2026-08-17 00:58:43] INFO:       Features -> LR: 111 | XGB: 101 | MLP: 135
+[2026-08-17 01:04:01] INFO:       Best MLP CV Log Loss: 0.6017
+[2026-08-17 01:04:01] INFO:       Best XGBoost CV Log Loss: 0.5919
+[2026-08-17 01:04:01] INFO:       Best Logistic Regression CV Log Loss: 0.5936
+[2026-08-17 01:04:01] INFO:       Applying cross-validated calibration to base models...
+[2026-08-17 01:04:25] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:04:26] INFO:       Learned Formula: (0.546 * MLP) + (0.393 * XGB) + (0.060 * LR)
+[2026-08-17 01:04:26] INFO: Baseline Full-Track LogLoss: 0.62224
+[2026-08-17 01:04:26] INFO: Baseline completed in 5m 44s
+
+[2026-08-17 01:04:26] INFO: [Phase 2] Beginning Independent Elimination Loop...
+[2026-08-17 01:04:26] INFO: 
+--- Computing Independent Importances (Iter 1) ---
+[2026-08-17 01:05:28] INFO: Generated 30 interleaved candidates for evaluation.
+[2026-08-17 01:05:28] INFO: 
+Testing removal of [DELTA_Z_FTA_EWMA_3] from [MLP]
+[2026-08-17 01:05:36] INFO:   [REJECTED] Fast-Track failed to improve: -0.00056
+[2026-08-17 01:05:36] INFO:   ✖ Iteration completed in 8s
+[2026-08-17 01:05:36] INFO: 
+Testing removal of [AWAY_SOS_EWMA_3] from [XGB]
+[2026-08-17 01:05:41] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00080. Running Full-Track...
+[2026-08-17 01:05:53] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:05:53] INFO:       Learned Formula: (0.540 * MLP) + (0.404 * XGB) + (0.055 * LR)
+[2026-08-17 01:05:54] INFO:   [ACCEPTED] Full-Track LogLoss improved by 0.00010
+[2026-08-17 01:05:54] INFO:   ✔ Iteration completed in 17s
+[2026-08-17 01:05:54] INFO: 
+--- OPTIMIZATION UPDATE ---
+[2026-08-17 01:05:54] INFO: Dropped:           [AWAY_SOS_EWMA_3] from [XGB]
+[2026-08-17 01:05:54] INFO: Current LogLoss:   0.62213
+[2026-08-17 01:05:54] INFO: Current Ensemble:  MLP: 0.54 | XGB: 0.40 | LR: 0.06
+[2026-08-17 01:05:54] INFO: ---------------------------
+
+[2026-08-17 01:05:54] INFO: 
+--- Computing Independent Importances (Iter 2) ---
+[2026-08-17 01:06:54] INFO: Generated 30 interleaved candidates for evaluation.
+[2026-08-17 01:06:54] INFO: 
+Testing removal of [DELTA_Z_FTA_EWMA_3] from [MLP]
+[2026-08-17 01:06:58] INFO:   [REJECTED] Fast-Track failed to improve: -0.00049
+[2026-08-17 01:06:58] INFO:   ✖ Iteration completed in 3s
+[2026-08-17 01:06:58] INFO: 
+Testing removal of [HOME_ROLLING_OFF_RATING] from [XGB]
+[2026-08-17 01:07:02] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00108. Running Full-Track...
+[2026-08-17 01:07:15] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:07:15] INFO:       Learned Formula: (0.542 * MLP) + (0.418 * XGB) + (0.040 * LR)
+[2026-08-17 01:07:15] INFO:   [ACCEPTED] Full-Track LogLoss improved by 0.00018
+[2026-08-17 01:07:15] INFO:   ✔ Iteration completed in 17s
+[2026-08-17 01:07:15] INFO: 
+--- OPTIMIZATION UPDATE ---
+[2026-08-17 01:07:15] INFO: Dropped:           [HOME_ROLLING_OFF_RATING] from [XGB]
+[2026-08-17 01:07:15] INFO: Current LogLoss:   0.62195
+[2026-08-17 01:07:15] INFO: Current Ensemble:  MLP: 0.54 | XGB: 0.42 | LR: 0.04
+[2026-08-17 01:07:15] INFO: ---------------------------
+
+[2026-08-17 01:07:15] INFO: 
+--- Computing Independent Importances (Iter 3) ---
+[2026-08-17 01:08:18] INFO: Generated 30 interleaved candidates for evaluation.
+[2026-08-17 01:08:18] INFO: 
+Testing removal of [DELTA_Z_FTA_EWMA_3] from [MLP]
+[2026-08-17 01:08:24] INFO:   [REJECTED] Fast-Track failed to improve: -0.00048
+[2026-08-17 01:08:24] INFO:   ✖ Iteration completed in 5s
+[2026-08-17 01:08:24] INFO: 
+Testing removal of [AWAY_OFF_RATING_EWMA_5] from [XGB]
+[2026-08-17 01:08:27] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00078. Running Full-Track...
+[2026-08-17 01:08:39] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:08:39] INFO:       Learned Formula: (0.538 * MLP) + (0.415 * XGB) + (0.047 * LR)
+[2026-08-17 01:08:39] INFO:   [REJECTED] Full-Track failed to improve: -0.00009
+[2026-08-17 01:08:39] INFO:   ✖ Iteration completed in 15s
+[2026-08-17 01:08:39] INFO: 
+Testing removal of [DELTA_Z_FG3M_EWMA_3] from [LR]
+[2026-08-17 01:08:41] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00016. Running Full-Track...
+[2026-08-17 01:08:53] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:08:53] INFO:       Learned Formula: (0.541 * MLP) + (0.418 * XGB) + (0.041 * LR)
+[2026-08-17 01:08:53] INFO:   [REJECTED] Full-Track failed to improve: 0.00000
+[2026-08-17 01:08:53] INFO:   ✖ Iteration completed in 14s
+[2026-08-17 01:08:53] INFO: 
+Testing removal of [DELTA_Z_OREB_EWMA_5] from [MLP]
+[2026-08-17 01:08:57] INFO:   [REJECTED] Fast-Track failed to improve: -0.00069
+[2026-08-17 01:08:57] INFO:   ✖ Iteration completed in 3s
+[2026-08-17 01:08:57] INFO: 
+Testing removal of [AWAY_SOS_EWMA_5] from [XGB]
+[2026-08-17 01:09:02] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00076. Running Full-Track...
+[2026-08-17 01:09:14] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:09:15] INFO:       Learned Formula: (0.538 * MLP) + (0.418 * XGB) + (0.044 * LR)
+[2026-08-17 01:09:15] INFO:   [REJECTED] Full-Track failed to improve: -0.00006
+[2026-08-17 01:09:15] INFO:   ✖ Iteration completed in 17s
+[2026-08-17 01:09:15] INFO: 
+Testing removal of [DELTA_Z_TOV_EWMA_10] from [LR]
+[2026-08-17 01:09:17] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00014. Running Full-Track...
+[2026-08-17 01:09:31] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:09:31] INFO:       Learned Formula: (0.540 * MLP) + (0.416 * XGB) + (0.044 * LR)
+[2026-08-17 01:09:31] INFO:   [REJECTED] Full-Track failed to improve: 0.00000
+[2026-08-17 01:09:31] INFO:   ✖ Iteration completed in 16s
+[2026-08-17 01:09:31] INFO: 
+Testing removal of [DELTA_Z_OREB_EWMA_3] from [MLP]
+[2026-08-17 01:09:39] INFO:   [REJECTED] Fast-Track failed to improve: -0.00065
+[2026-08-17 01:09:39] INFO:   ✖ Iteration completed in 8s
+[2026-08-17 01:09:39] INFO: 
+Testing removal of [AWAY_SOS_EWMA_10] from [XGB]
+[2026-08-17 01:09:43] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00057. Running Full-Track...
+[2026-08-17 01:09:56] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:09:56] INFO:       Learned Formula: (0.536 * MLP) + (0.423 * XGB) + (0.041 * LR)
+[2026-08-17 01:09:56] INFO:   [REJECTED] Full-Track failed to improve: 0.00000
+[2026-08-17 01:09:56] INFO:   ✖ Iteration completed in 17s
+[2026-08-17 01:09:56] INFO: 
+Testing removal of [DELTA_Z_FG_PCT_EWMA_10] from [LR]
+[2026-08-17 01:09:58] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00016. Running Full-Track...
+[2026-08-17 01:10:11] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:10:12] INFO:       Learned Formula: (0.541 * MLP) + (0.418 * XGB) + (0.041 * LR)
+[2026-08-17 01:10:12] INFO:   [REJECTED] Full-Track failed to improve: 0.00000
+[2026-08-17 01:10:12] INFO:   ✖ Iteration completed in 15s
+[2026-08-17 01:10:12] INFO: 
+Testing removal of [EMBED_RAW_DELTA_4_MAX] from [MLP]
+[2026-08-17 01:10:18] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00234. Running Full-Track...
+[2026-08-17 01:10:30] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:10:30] INFO:       Learned Formula: (0.574 * MLP) + (0.399 * XGB) + (0.027 * LR)
+[2026-08-17 01:10:31] INFO:   [ACCEPTED] Full-Track LogLoss improved by 0.00059
+[2026-08-17 01:10:31] INFO:   ✔ Iteration completed in 18s
+[2026-08-17 01:10:31] INFO: 
+--- OPTIMIZATION UPDATE ---
+[2026-08-17 01:10:31] INFO: Dropped:           [EMBED_RAW_DELTA_4_MAX] from [MLP]
+[2026-08-17 01:10:31] INFO: Current LogLoss:   0.62136
+[2026-08-17 01:10:31] INFO: Current Ensemble:  MLP: 0.57 | XGB: 0.40 | LR: 0.03
+[2026-08-17 01:10:31] INFO: ---------------------------
+
+[2026-08-17 01:10:31] INFO: 
+--- Computing Independent Importances (Iter 4) ---
+[2026-08-17 01:11:41] INFO: Generated 30 interleaved candidates for evaluation.
+[2026-08-17 01:11:41] INFO: 
+Testing removal of [DELTA_Z_OREB_EWMA_3] from [MLP]
+[2026-08-17 01:11:46] INFO:   [REJECTED] Fast-Track failed to improve: -0.00095
+[2026-08-17 01:11:46] INFO:   ✖ Iteration completed in 4s
+[2026-08-17 01:11:46] INFO: 
+Testing removal of [AWAY_OFF_RATING_EWMA_5] from [XGB]
+[2026-08-17 01:11:50] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00081. Running Full-Track...
+[2026-08-17 01:12:03] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:12:03] INFO:       Learned Formula: (0.571 * MLP) + (0.395 * XGB) + (0.034 * LR)
+[2026-08-17 01:12:04] INFO:   [REJECTED] Full-Track failed to improve: -0.00010
+[2026-08-17 01:12:04] INFO:   ✖ Iteration completed in 17s
+[2026-08-17 01:12:04] INFO: 
+Testing removal of [DELTA_Z_FG3M_EWMA_3] from [LR]
+[2026-08-17 01:12:06] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00010. Running Full-Track...
+[2026-08-17 01:12:19] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:12:20] INFO:       Learned Formula: (0.574 * MLP) + (0.398 * XGB) + (0.028 * LR)
+[2026-08-17 01:12:20] INFO:   [REJECTED] Full-Track failed to improve: 0.00000
+[2026-08-17 01:12:20] INFO:   ✖ Iteration completed in 16s
+[2026-08-17 01:12:20] INFO: 
+Testing removal of [DELTA_Z_FTA_EWMA_3] from [MLP]
+[2026-08-17 01:12:23] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00304. Running Full-Track...
+[2026-08-17 01:12:36] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:12:36] INFO:       Learned Formula: (0.567 * MLP) + (0.392 * XGB) + (0.041 * LR)
+[2026-08-17 01:12:37] INFO:   [REJECTED] Full-Track failed to improve: -0.00028
+[2026-08-17 01:12:37] INFO:   ✖ Iteration completed in 16s
+[2026-08-17 01:12:37] INFO: 
+Testing removal of [AWAY_SOS_EWMA_5] from [XGB]
+[2026-08-17 01:12:40] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00079. Running Full-Track...
+[2026-08-17 01:12:54] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:12:54] INFO:       Learned Formula: (0.570 * MLP) + (0.398 * XGB) + (0.032 * LR)
+[2026-08-17 01:12:54] INFO:   [REJECTED] Full-Track failed to improve: -0.00007
+[2026-08-17 01:12:54] INFO:   ✖ Iteration completed in 17s
+[2026-08-17 01:12:54] INFO: 
+Testing removal of [DELTA_Z_TOV_EWMA_10] from [LR]
+[2026-08-17 01:12:57] INFO:   [REJECTED] Fast-Track failed to improve: 0.00009
+[2026-08-17 01:12:57] INFO:   ✖ Iteration completed in 2s
+[2026-08-17 01:12:57] INFO: 
+Testing removal of [DELTA_FATIGUE_IMPORTANCE_10_STD] from [MLP]
+[2026-08-17 01:13:02] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00164. Running Full-Track...
+[2026-08-17 01:13:16] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:13:16] INFO:       Learned Formula: (0.615 * MLP) + (0.385 * XGB) + (0.000 * LR)
+[2026-08-17 01:13:16] INFO:   [ACCEPTED] Full-Track LogLoss improved by 0.00112
+[2026-08-17 01:13:16] INFO:   ✔ Iteration completed in 19s
+[2026-08-17 01:13:16] INFO: 
+--- OPTIMIZATION UPDATE ---
+[2026-08-17 01:13:16] INFO: Dropped:           [DELTA_FATIGUE_IMPORTANCE_10_STD] from [MLP]
+[2026-08-17 01:13:16] INFO: Current LogLoss:   0.62024
+[2026-08-17 01:13:16] INFO: Current Ensemble:  MLP: 0.61 | XGB: 0.39 | LR: 0.00
+[2026-08-17 01:13:16] INFO: ---------------------------
+
+[2026-08-17 01:13:16] INFO: 
+--- Computing Independent Importances (Iter 5) ---
+[2026-08-17 01:14:30] INFO: Generated 20 interleaved candidates for evaluation.
+[2026-08-17 01:14:30] INFO: 
+Testing removal of [DELTA_Z_FG3A_EWMA_5] from [MLP]
+[2026-08-17 01:14:35] INFO:   [REJECTED] Fast-Track failed to improve: -0.00215
+[2026-08-17 01:14:35] INFO:   ✖ Iteration completed in 5s
+[2026-08-17 01:14:35] INFO: 
+Testing removal of [AWAY_OFF_RATING_EWMA_5] from [XGB]
+[2026-08-17 01:14:39] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00075. Running Full-Track...
+[2026-08-17 01:14:52] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:14:53] INFO:       Learned Formula: (0.616 * MLP) + (0.384 * XGB) + (0.000 * LR)
+[2026-08-17 01:14:53] INFO:   [REJECTED] Full-Track failed to improve: -0.00015
+[2026-08-17 01:14:53] INFO:   ✖ Iteration completed in 18s
+[2026-08-17 01:14:53] INFO: 
+Testing removal of [DELTA_Z_OREB_EWMA_10] from [MLP]
+[2026-08-17 01:14:58] INFO:   [REJECTED] Fast-Track failed to improve: -0.00029
+[2026-08-17 01:14:58] INFO:   ✖ Iteration completed in 4s
+[2026-08-17 01:14:58] INFO: 
+Testing removal of [AWAY_SOS_EWMA_5] from [XGB]
+[2026-08-17 01:15:02] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00074. Running Full-Track...
+[2026-08-17 01:15:15] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:15:16] INFO:       Learned Formula: (0.615 * MLP) + (0.385 * XGB) + (0.000 * LR)
+[2026-08-17 01:15:16] INFO:   [REJECTED] Full-Track failed to improve: -0.00011
+[2026-08-17 01:15:16] INFO:   ✖ Iteration completed in 18s
+[2026-08-17 01:15:16] INFO: 
+Testing removal of [DELTA_Z_OREB_ROLLING_8] from [MLP]
+[2026-08-17 01:15:24] INFO:   [REJECTED] Fast-Track failed to improve: -0.00292
+[2026-08-17 01:15:24] INFO:   ✖ Iteration completed in 8s
+[2026-08-17 01:15:24] INFO: 
+Testing removal of [AWAY_SOS_EWMA_10] from [XGB]
+[2026-08-17 01:15:28] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00057. Running Full-Track...
+[2026-08-17 01:15:43] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:15:43] INFO:       Learned Formula: (0.612 * MLP) + (0.388 * XGB) + (0.000 * LR)
+[2026-08-17 01:15:43] INFO:   [REJECTED] Full-Track failed to improve: -0.00006
+[2026-08-17 01:15:43] INFO:   ✖ Iteration completed in 18s
+[2026-08-17 01:15:43] INFO: 
+Testing removal of [DELTA_Z_FG3A_EWMA_3] from [MLP]
+[2026-08-17 01:15:48] INFO:   [REJECTED] Fast-Track failed to improve: -0.00208
+[2026-08-17 01:15:48] INFO:   ✖ Iteration completed in 4s
+[2026-08-17 01:15:48] INFO: 
+Testing removal of [HOME_B2B] from [XGB]
+[2026-08-17 01:15:52] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00082. Running Full-Track...
+[2026-08-17 01:16:06] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:16:06] INFO:       Learned Formula: (0.617 * MLP) + (0.383 * XGB) + (0.000 * LR)
+[2026-08-17 01:16:07] INFO:   [REJECTED] Full-Track failed to improve: -0.00013
+[2026-08-17 01:16:07] INFO:   ✖ Iteration completed in 18s
+[2026-08-17 01:16:07] INFO: 
+Testing removal of [DELTA_Z_STL_EWMA_5] from [MLP]
+[2026-08-17 01:16:18] INFO:   [REJECTED] Fast-Track failed to improve: -0.00397
+[2026-08-17 01:16:18] INFO:   ✖ Iteration completed in 11s
+[2026-08-17 01:16:18] INFO: 
+Testing removal of [AWAY_ACTIVE_ROSTER_FORM_MAX] from [XGB]
+[2026-08-17 01:16:22] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00089. Running Full-Track...
+[2026-08-17 01:16:36] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:16:36] INFO:       Learned Formula: (0.621 * MLP) + (0.379 * XGB) + (0.000 * LR)
+[2026-08-17 01:16:36] INFO:   [REJECTED] Full-Track failed to improve: -0.00016
+[2026-08-17 01:16:36] INFO:   ✖ Iteration completed in 18s
+[2026-08-17 01:16:36] INFO: 
+Testing removal of [DELTA_Z_BLK_EWMA_5] from [MLP]
+[2026-08-17 01:16:44] INFO:   [REJECTED] Fast-Track failed to improve: -0.00258
+[2026-08-17 01:16:44] INFO:   ✖ Iteration completed in 7s
+[2026-08-17 01:16:44] INFO: 
+Testing removal of [HOME_ACTIVE_ROSTER_STAR_SHARE] from [XGB]
+[2026-08-17 01:16:48] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00087. Running Full-Track...
+[2026-08-17 01:17:03] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:17:03] INFO:       Learned Formula: (0.619 * MLP) + (0.381 * XGB) + (0.000 * LR)
+[2026-08-17 01:17:03] INFO:   [REJECTED] Full-Track failed to improve: -0.00013
+[2026-08-17 01:17:03] INFO:   ✖ Iteration completed in 19s
+[2026-08-17 01:17:03] INFO: 
+Testing removal of [DELTA_FATIGUE_EWMA_MINUTES_10_MAX] from [MLP]
+[2026-08-17 01:17:10] INFO:   [REJECTED] Fast-Track failed to improve: -0.00312
+[2026-08-17 01:17:10] INFO:   ✖ Iteration completed in 6s
+[2026-08-17 01:17:10] INFO: 
+Testing removal of [HOME_SOS_EWMA_3] from [XGB]
+[2026-08-17 01:17:14] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00084. Running Full-Track...
+[2026-08-17 01:17:28] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:17:29] INFO:       Learned Formula: (0.612 * MLP) + (0.388 * XGB) + (0.000 * LR)
+[2026-08-17 01:17:29] INFO:   [REJECTED] Full-Track failed to improve: -0.00003
+[2026-08-17 01:17:29] INFO:   ✖ Iteration completed in 19s
+[2026-08-17 01:17:29] INFO: 
+Testing removal of [DELTA_Z_STL_EWMA_10] from [MLP]
+[2026-08-17 01:17:40] INFO:   [REJECTED] Fast-Track failed to improve: -0.00375
+[2026-08-17 01:17:40] INFO:   ✖ Iteration completed in 10s
+[2026-08-17 01:17:40] INFO: 
+Testing removal of [HOME_REST_DAYS] from [XGB]
+[2026-08-17 01:17:44] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00086. Running Full-Track...
+[2026-08-17 01:17:58] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:17:58] INFO:       Learned Formula: (0.618 * MLP) + (0.382 * XGB) + (0.000 * LR)
+[2026-08-17 01:17:58] INFO:   [REJECTED] Full-Track failed to improve: -0.00017
+[2026-08-17 01:17:58] INFO:   ✖ Iteration completed in 18s
+[2026-08-17 01:17:58] INFO: 
+Testing removal of [DELTA_FATIGUE_EWMA_MINUTES_10_MEAN] from [MLP]
+[2026-08-17 01:18:04] INFO:   [REJECTED] Fast-Track failed to improve: -0.00511
+[2026-08-17 01:18:04] INFO:   ✖ Iteration completed in 5s
+[2026-08-17 01:18:04] INFO: 
+Testing removal of [HOME_FATIGUE_EWMA_MINUTES_3_MAX] from [XGB]
+[2026-08-17 01:18:08] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00075. Running Full-Track...
+[2026-08-17 01:18:22] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:18:22] INFO:       Learned Formula: (0.622 * MLP) + (0.378 * XGB) + (0.000 * LR)
+[2026-08-17 01:18:23] INFO:   [REJECTED] Full-Track failed to improve: -0.00020
+[2026-08-17 01:18:23] INFO:   ✖ Iteration completed in 18s
+[2026-08-17 01:18:23] INFO: 
+Testing removal of [DELTA_FATIGUE_EWMA_MINUTES_5_MAX] from [MLP]
+[2026-08-17 01:18:27] INFO:   [REJECTED] Fast-Track failed to improve: -0.00461
+[2026-08-17 01:18:27] INFO:   ✖ Iteration completed in 4s
+[2026-08-17 01:18:27] INFO: 
+Testing removal of [AWAY_OFF_RATING_EWMA_3] from [XGB]
+[2026-08-17 01:18:30] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00079. Running Full-Track...
+[2026-08-17 01:18:45] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:18:45] INFO:       Learned Formula: (0.616 * MLP) + (0.384 * XGB) + (0.000 * LR)
+[2026-08-17 01:18:46] INFO:   [REJECTED] Full-Track failed to improve: -0.00014
+[2026-08-17 01:18:46] INFO:   ✖ Iteration completed in 18s
+[2026-08-17 01:18:46] INFO: 
+--- Computing Independent Importances (Iter 6) ---
+[2026-08-17 01:19:58] INFO: Generated 20 interleaved candidates for evaluation.
+[2026-08-17 01:19:58] INFO: 
+Testing removal of [DELTA_Z_FG3A_EWMA_5] from [MLP]
+[2026-08-17 01:20:03] INFO:   [REJECTED] Fast-Track failed to improve: -0.00215
+[2026-08-17 01:20:03] INFO:   ✖ Iteration completed in 4s
+[2026-08-17 01:20:03] INFO: 
+Testing removal of [AWAY_OFF_RATING_EWMA_5] from [XGB]
+[2026-08-17 01:20:07] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00075. Running Full-Track...
+[2026-08-17 01:20:21] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:20:22] INFO:       Learned Formula: (0.616 * MLP) + (0.384 * XGB) + (0.000 * LR)
+[2026-08-17 01:20:22] INFO:   [REJECTED] Full-Track failed to improve: -0.00015
+[2026-08-17 01:20:22] INFO:   ✖ Iteration completed in 18s
+[2026-08-17 01:20:22] INFO: 
+Testing removal of [DELTA_Z_OREB_EWMA_10] from [MLP]
+[2026-08-17 01:20:27] INFO:   [REJECTED] Fast-Track failed to improve: -0.00029
+[2026-08-17 01:20:27] INFO:   ✖ Iteration completed in 4s
+[2026-08-17 01:20:27] INFO: 
+Testing removal of [AWAY_SOS_EWMA_5] from [XGB]
+[2026-08-17 01:20:30] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00074. Running Full-Track...
+[2026-08-17 01:20:45] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:20:45] INFO:       Learned Formula: (0.615 * MLP) + (0.385 * XGB) + (0.000 * LR)
+[2026-08-17 01:20:45] INFO:   [REJECTED] Full-Track failed to improve: -0.00011
+[2026-08-17 01:20:45] INFO:   ✖ Iteration completed in 18s
+[2026-08-17 01:20:45] INFO: 
+Testing removal of [DELTA_Z_OREB_ROLLING_8] from [MLP]
+[2026-08-17 01:20:49] INFO:   [REJECTED] Fast-Track failed to improve: -0.00292
+[2026-08-17 01:20:49] INFO:   ✖ Iteration completed in 4s
+[2026-08-17 01:20:49] INFO: 
+Testing removal of [AWAY_SOS_EWMA_10] from [XGB]
+[2026-08-17 01:20:53] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00057. Running Full-Track...
+[2026-08-17 01:21:07] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:21:07] INFO:       Learned Formula: (0.612 * MLP) + (0.388 * XGB) + (0.000 * LR)
+[2026-08-17 01:21:08] INFO:   [REJECTED] Full-Track failed to improve: -0.00006
+[2026-08-17 01:21:08] INFO:   ✖ Iteration completed in 18s
+[2026-08-17 01:21:08] INFO: 
+Testing removal of [DELTA_Z_FG3A_EWMA_3] from [MLP]
+[2026-08-17 01:21:17] INFO:   [REJECTED] Fast-Track failed to improve: -0.00208
+[2026-08-17 01:21:17] INFO:   ✖ Iteration completed in 9s
+[2026-08-17 01:21:17] INFO: 
+Testing removal of [HOME_B2B] from [XGB]
+[2026-08-17 01:21:21] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00082. Running Full-Track...
+[2026-08-17 01:21:36] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:21:36] INFO:       Learned Formula: (0.617 * MLP) + (0.383 * XGB) + (0.000 * LR)
+[2026-08-17 01:21:36] INFO:   [REJECTED] Full-Track failed to improve: -0.00013
+[2026-08-17 01:21:36] INFO:   ✖ Iteration completed in 18s
+[2026-08-17 01:21:36] INFO: 
+Testing removal of [DELTA_Z_STL_EWMA_5] from [MLP]
+[2026-08-17 01:21:44] INFO:   [REJECTED] Fast-Track failed to improve: -0.00397
+[2026-08-17 01:21:44] INFO:   ✖ Iteration completed in 7s
+[2026-08-17 01:21:44] INFO: 
+Testing removal of [AWAY_ACTIVE_ROSTER_FORM_MAX] from [XGB]
+[2026-08-17 01:21:47] INFO:   [GATE PASSED] Partial Fast-Track improved by 0.00089. Running Full-Track...
+[2026-08-17 01:22:01] INFO:       Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...
+[2026-08-17 01:22:02] INFO:       Learned Formula: (0.621 * MLP) + (0.379 * XGB) + (0.000 * LR)
+[2026-08-17 01:22:02] INFO:   [REJECTED] Full-Track failed to improve: -0.00016
+[2026-08-17 01:22:02] INFO:   ✖ Iteration completed in 18s
+[2026-08-17 01:22:02] INFO: 
+Hit 30 consecutive failures. Triggering Early Stopping.
+[2026-08-17 01:22:02] INFO: 
+=========================================
+[2026-08-17 01:22:02] INFO:                SBS COMPLETE              
+[2026-08-17 01:22:02] INFO: =========================================
+
+[2026-08-17 01:22:02] INFO: Total time elapsed: 23m 20s
+[2026-08-17 01:22:02] INFO: Final Calibrated LogLoss: 0.62024
+[2026-08-17 01:22:02] INFO: Final Removals:
+{
+    "mlp": [
+        "EMBED_RAW_DELTA_4_MAX",
+        "DELTA_FATIGUE_IMPORTANCE_10_STD"
+    ],
+    "xgb": [
+        "AWAY_SOS_EWMA_3",
+        "HOME_ROLLING_OFF_RATING"
+    ],
+    "lr": []
+}

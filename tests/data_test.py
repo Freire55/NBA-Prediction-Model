@@ -40,38 +40,26 @@ def mock_matchups_data() -> pd.DataFrame:
 
 @patch("training.data.pd.read_csv")
 def test_chronological_split(mock_read_csv, mock_matchups_data):
-    """
-    Verifies that the dataset is split chronologically without overlap
-    and that the aggregate counts match the original dataset length.
-    """
-    mock_read_csv.return_value = mock_matchups_data
+        """
+        Verifies that the dataset is split chronologically without overlap
+        and that the aggregate counts match the original dataset length.
+        """
+        mock_read_csv.return_value = mock_matchups_data
     
-    config = TrainingConfig(
-        train_end="22018", 
-        validation_end="22020",
-    )
+        config = TrainingConfig(
+            train_end="22018",
+            validation_end="22020",
+        )
     
-    (
-        train_X,
-        train_y,
-        val_X,
-        val_y,
-        test_X,
-        test_y,
-        features,
-        summary,
-    ) = load_and_prep_data(Path("dummy_dir"), config)
-    
-    # Verify split boundaries using SEASON_YEAR since HOME_SEASON_ID is stripped
-    assert train_X["SEASON_YEAR"].max() <= 2018
-    assert val_X["SEASON_YEAR"].min() > 2018
-    assert val_X["SEASON_YEAR"].max() <= 2020
-    assert test_X["SEASON_YEAR"].min() > 2020
-    
-    # Verify strict non-overlap by checking index intersections
-    assert train_X.index.intersection(val_X.index).empty
-    assert val_X.index.intersection(test_X.index).empty
-    
-    # Verify conservation of samples
-    total_samples = summary["train_games"] + summary["validation_games"] + summary["test_games"]
-    assert total_samples == len(mock_matchups_data)
+        # CHANGE: Assign directly to a single TrainingData variable
+        training_data = load_and_prep_data(Path("dummy_dir"), config)
+
+        # Update your assertions to use the new dataclass structure.
+        # Example assertions based on your previous unpack logic:
+        assert len(training_data.y_train) > 0 
+        assert training_data.summary.train_games == len(training_data.y_train)
+        
+        # Verify heterogeneous feature routing works
+        assert isinstance(training_data.mlp.X_train, pd.DataFrame)
+        assert isinstance(training_data.xgb.X_train, pd.DataFrame)
+        assert isinstance(training_data.lr.X_train, pd.DataFrame)

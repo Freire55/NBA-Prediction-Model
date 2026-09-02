@@ -84,6 +84,7 @@ def setup_logger(output_dir: Path) -> logging.Logger:
 
 def save_json(data: dict, filepath: Path) -> None:
     """Saves a dictionary as a formatted JSON file."""
+    filepath.parent.mkdir(parents=True, exist_ok=True)
     with open(filepath, "w") as file:
         json.dump(data, file, cls=NumpyEncoder, indent=4)
 
@@ -98,6 +99,7 @@ def save_joblib(obj: Any, filepath: Path) -> None:
         filepath:
             Destination file.
     """
+    filepath.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(obj, filepath)
 
 
@@ -111,6 +113,7 @@ def save_plot(output_dir: Path, filename: str) -> None:
         filename:
             Output image filename.
     """
+    output_dir.mkdir(parents=True, exist_ok=True)
     plt.tight_layout()
     plt.savefig(output_dir / filename)
     plt.close()
