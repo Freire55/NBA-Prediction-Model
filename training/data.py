@@ -97,7 +97,15 @@ def load_and_prep_data(
     config: TrainingConfig
 ) -> TrainingData:
     """Loads dataset and performs chronological splits for all feature sets."""
-    df = pd.read_csv(data_dir / DATASET_FILE)
+    parquet_path = (data_dir / DATASET_FILE).with_suffix(".parquet")
+    if parquet_path.exists():
+        df = pd.read_parquet(parquet_path)
+    else:
+        df = pd.read_csv(data_dir / DATASET_FILE)
+
+    float_cols = df.select_dtypes(include=["float64"]).columns
+    if len(float_cols) > 0:
+        df[float_cols] = df[float_cols].astype("float32")
 
     df[SEASON_COLUMN] = df[SEASON_COLUMN].astype(str)
     feature_dict = get_model_features(df, config)

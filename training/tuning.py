@@ -92,6 +92,8 @@ def tune_base_models(
         estimator=MLPClassifier(
             random_state=config.random_seed,
             early_stopping=True,
+            n_iter_no_change=15,
+            tol=1e-4,
             learning_rate="adaptive",
         ),
         param_distributions=config.mlp_grid,
@@ -107,6 +109,7 @@ def tune_base_models(
             random_state=config.random_seed,
             eval_metric="logloss",
             tree_method="hist",
+            n_jobs=1,
         ),
         param_distributions=config.xgb_grid,
         n_iter=config.xgb_search_iterations,

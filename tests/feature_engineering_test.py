@@ -65,3 +65,35 @@ def test_simulate_elo_updates():
     
     # Ensure no NaN errors occurred during the iterative simulation
     assert not result["PRE_GAME_ELO"].isna().any()
+
+
+def test_elo_favors_stronger_team_and_season_regression():
+    """
+    Verifies that a higher Elo team has higher win probability and receives
+    season-to-season mean reversion towards INITIAL_ELO.
+    """
+    df = pd.DataFrame(
+        [
+            {"GAME_ID": "1", "GAME_DATE": "2023-01-01", "TEAM_ABBREVIATION": "LAL", "MATCHUP": "LAL vs. DET", "PTS": 120, "SEASON_ID": "22022"},
+            {"GAME_ID": "1", "GAME_DATE": "2023-01-01", "TEAM_ABBREVIATION": "DET", "MATCHUP": "DET @ LAL", "PTS": 90, "SEASON_ID": "22022"},
+            {"GAME_ID": "2", "GAME_DATE": "2023-01-03", "TEAM_ABBREVIATION": "LAL", "MATCHUP": "LAL vs. DET", "PTS": 110, "SEASON_ID": "22022"},
+            {"GAME_ID": "2", "GAME_DATE": "2023-01-03", "TEAM_ABBREVIATION": "DET", "MATCHUP": "DET @ LAL", "PTS": 100, "SEASON_ID": "22022"},
+            # New season starts
+            {"GAME_ID": "3", "GAME_DATE": "2023-10-24", "TEAM_ABBREVIATION": "LAL", "MATCHUP": "LAL vs. DET", "PTS": 105, "SEASON_ID": "22023"},
+            {"GAME_ID": "3", "GAME_DATE": "2023-10-24", "TEAM_ABBREVIATION": "DET", "MATCHUP": "DET @ LAL", "PTS": 100, "SEASON_ID": "22023"},
+        ]
+    )
+    df["GAME_DATE"] = pd.to_datetime(df["GAME_DATE"])
+
+    result = simulate_elo(df)
+    
+    # After winning 2 games, LAL Elo must be > INITIAL_ELO
+    lal_g2 = result.loc[(result["GAME_ID"] == "2") & (result["TEAM_ABBREVIATION"] == "LAL"), "PRE_GAME_ELO"].iloc[0]
+    det_g2 = result.loc[(result["GAME_ID"] == "2") & (result["TEAM_ABBREVIATION"] == "DET"), "PRE_GAME_ELO"].iloc[0]
+    assert lal_g2 > INITIAL_ELO
+    assert det_g2 < INITIAL_ELO
+    
+    # In Game 3 (new season), LAL should be regressed towards INITIAL_ELO (0.75 * prev + 0.25 * 1500)
+    lal_g3 = result.loc[(result["GAME_ID"] == "3") & (result["TEAM_ABBREVIATION"] == "LAL"), "PRE_GAME_ELO"].iloc[0]
+    # Winning game 2 increased LAL's rating further, then 25% regressed towards 1500
+    assert lal_g3 > INITIAL_ELO

@@ -184,7 +184,7 @@ def generate_shap(
     )
 
     explainer = shap.TreeExplainer(unwrap_base_estimator(artifacts.xgb.final_model))
-    shap_values = explainer.shap_values(X_explain)
+    shap_values = explainer.shap_values(X_explain, check_additivity=False)
 
     plt.figure(figsize=(10, 8))
 

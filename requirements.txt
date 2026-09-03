@@ -8,3 +8,5 @@ matplotlib
 shap
 joblib
 pytest
+pandera
+pyarrow

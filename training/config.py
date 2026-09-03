@@ -200,7 +200,7 @@ class TrainingConfig:
     # Explainability & Evaluation
     # ======================================================
 
-    n_shap_samples: int = 3000
+    n_shap_samples: int = 1000
     permutation_repeats: int = 20
     calibration_bins: int = 10
 
@@ -230,7 +230,7 @@ class TrainingConfig:
             "alpha": [1e-5, 1e-4, 1e-3, 1e-2],
             "learning_rate_init": [0.0005, 0.001, 0.005],
             "batch_size": [32, 64, 128],
-            "max_iter": [1000],
+            "max_iter": [500],
         }
     )
 

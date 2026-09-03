@@ -82,6 +82,51 @@ def ewma(series: pd.Series, span: int = ROLLING_WINDOW) -> pd.Series:
     """Computes an exponentially weighted moving average using only prior observations."""
     return series.shift(1).ewm(adjust=False, span=span).mean()
 
+
+def add_volatility_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Computes robust expected player impact with variance penalty and outlier clipping,
+    and estimates star duo concentration (TOP_2_IMPACT_SHARE).
+    """
+    global_prior = df["GAME_SCORE"].std() if "GAME_SCORE" in df else 5.0
+    player_groups = df.groupby("PLAYER_ID")
+    baseline_mean = df["PLAYER_FORM_ROLLING_5"]
+
+    df["PLAYER_GAME_SCORE_VOLATILITY"] = (
+        player_groups["GAME_SCORE"]
+        .transform(lambda x: x.shift(1).rolling(ROLLING_WINDOW, min_periods=1).std())
+        .fillna(global_prior)
+    )
+
+    df["GAME_SCORE_CEILING"] = baseline_mean + 2.5 * df["PLAYER_GAME_SCORE_VOLATILITY"]
+    df["GAME_SCORE_FLOOR"] = baseline_mean - 2.5 * df["PLAYER_GAME_SCORE_VOLATILITY"]
+
+    df["CAPPED_GAME_SCORE"] = np.minimum(df["GAME_SCORE"], df["GAME_SCORE_CEILING"])
+    df["CAPPED_GAME_SCORE"] = np.maximum(df["CAPPED_GAME_SCORE"], df["GAME_SCORE_FLOOR"])
+
+    robust_mean = (
+        df.groupby("PLAYER_ID")["CAPPED_GAME_SCORE"]
+        .transform(rolling_mean)
+        .fillna(global_prior)
+    )
+    robust_std = (
+        df.groupby("PLAYER_ID")["CAPPED_GAME_SCORE"]
+        .transform(lambda x: x.shift(1).rolling(ROLLING_WINDOW, min_periods=1).std())
+        .fillna(global_prior)
+    )
+
+    df["ROBUST_EXPECTED_IMPACT"] = robust_mean - (0.35 * robust_std)
+    df["WEIGHT"] = 1.0 / (robust_std**2 + 0.01)
+    df["WEIGHTED_EXPECTED_IMPACT"] = df["ROBUST_EXPECTED_IMPACT"] * df["WEIGHT"]
+
+    game_team_groups = df.groupby(["GAME_ID", "TEAM_ID"])
+    top_2_sum = game_team_groups["WEIGHTED_EXPECTED_IMPACT"].transform(lambda x: x.nlargest(2).sum())
+    total_sum = game_team_groups["WEIGHTED_EXPECTED_IMPACT"].transform("sum")
+    df["TOP_2_IMPACT_SHARE"] = (top_2_sum / (total_sum.replace(0, np.nan))).fillna(0.0)
+
+    return df
+
+
 # ======================================================
 # Main Pipeline
 # ======================================================
@@ -129,6 +174,8 @@ def main() -> None:
         FATIGUE_EWMA_MINUTES_5 = player_groups["MINUTES_NUM"].transform(lambda x: ewma(x, span=5)),
         FATIGUE_EWMA_MINUTES_10 = player_groups["MINUTES_NUM"].transform(lambda x: ewma(x, span=10)),
     )
+
+    logs_df = add_volatility_features(logs_df)
 
     # ======================================================
     # Merge Embeddings & Calculate Expected Impact
@@ -193,6 +240,10 @@ def main() -> None:
             ACTIVE_ROSTER_FORM_SUM=("EXPECTED_IMPACT", "sum"),
             ACTIVE_ROSTER_FORM_STD=("EXPECTED_IMPACT", "std"),
             ACTIVE_ROSTER_FORM_MAX=("EXPECTED_IMPACT", "max"),
+
+            ACTIVE_ROSTER_ROBUST_FORM_SUM=("ROBUST_EXPECTED_IMPACT", "sum"),
+            ACTIVE_ROSTER_ROBUST_FORM_MAX=("ROBUST_EXPECTED_IMPACT", "max"),
+            ACTIVE_ROSTER_TOP_2_SHARE=("TOP_2_IMPACT_SHARE", "max"),
 
             TOTAL_EXPECTED_MINUTES=("FATIGUE_EWMA_MINUTES_5", "sum"),
 
@@ -340,6 +391,16 @@ def main() -> None:
     matchups_df["DELTA_ACTIVE_ROSTER_STAR_SHARE"] = (
         matchups_df["HOME_ACTIVE_ROSTER_STAR_SHARE"]
         - matchups_df["AWAY_ACTIVE_ROSTER_STAR_SHARE"]
+    )
+
+    matchups_df["DELTA_ACTIVE_ROSTER_TOP_2_SHARE"] = (
+        matchups_df["HOME_ACTIVE_ROSTER_TOP_2_SHARE"]
+        - matchups_df["AWAY_ACTIVE_ROSTER_TOP_2_SHARE"]
+    )
+
+    matchups_df["DELTA_ACTIVE_ROSTER_ROBUST_FORM_SUM"] = (
+        matchups_df["HOME_ACTIVE_ROSTER_ROBUST_FORM_SUM"]
+        - matchups_df["AWAY_ACTIVE_ROSTER_ROBUST_FORM_SUM"]
     )
 
 

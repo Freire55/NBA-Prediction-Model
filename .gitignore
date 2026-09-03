@@ -1,24 +1,43 @@
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
 
+# Virtual environments
 .venv/
+venv/
+ENV/
+env/
 
-models/**/*.pkl
-
-models/**/*_cv_results.csv
-
-models/run_*
-
+# Data files & generated datasets (large artifacts)
 data/*.csv
+data/*.parquet
+data/*.feather
+data/*.h5
 
+# Serialized models, weights & tuning checkpoints
+models/**/*.pkl
+models/**/*_cv_results.csv
+models/run_*
+models/**/model.joblib
+optimization_checkpoints/
 
+# Execution logs
+*.log
+training.log
+
+# Testing & code quality caches
 .pytest_cache/
+.coverage
+htmlcov/
 
-a_explanation.md
+# Editor & OS metadata
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
 
+# Temporary notes
 fixes.txt
-
-optimize_features.py
-
-optimization_checkpoints
+a_explanation.md

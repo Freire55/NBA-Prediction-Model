@@ -20,6 +20,12 @@ import pandas as pd
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 
+
+import torch
+from torch import nn, optim
+from torchvision import datasets, transforms
+import matplotlib.pyplot as plt
+
 from feature_engineering_players import calculate_game_score
 
 # ======================================================
@@ -108,6 +114,7 @@ def calculate_pie_proxy(df: pd.DataFrame) -> pd.Series:
     return (player_stats / denominator).fillna(0)
 
 
+
 def main():
     logger.info("Loading raw player logs for embedding generation...")
     df = pd.read_csv(DATA_DIR / INPUT_FILE)
@@ -162,8 +169,9 @@ def main():
         return series.shift(1).ewm(halflife=EWMA_HALFLIFE, min_periods=1).mean()
 
     player_groups = df.groupby("PLAYER_ID")
-    for col in stat_cols:
-        df[f"ROLLING_{col}"] = player_groups[col].transform(calculate_leak_free_ewma)
+    rolling_df = player_groups[stat_cols].transform(calculate_leak_free_ewma)
+    rolling_df.columns = [f"ROLLING_{col}" for col in stat_cols]
+    df = pd.concat([df, rolling_df], axis=1)
 
     rolling_cols = [f"ROLLING_{col}" for col in stat_cols]
     df = df.dropna(subset=rolling_cols).copy()
