@@ -1,0 +1,37 @@
+TEAM_ABBREVIATION,TEAM_NAME,ARENA_NAME,CITY,STATE,ALTITUDE_FT,ALTITUDE_M
+ATL,Atlanta Hawks,State Farm Arena,Atlanta,GA,1050,320
+BKN,Brooklyn Nets,Barclays Center,Brooklyn,NY,50,15
+BOS,Boston Celtics,TD Garden,Boston,MA,20,6
+CHA,Charlotte Hornets,Spectrum Center,Charlotte,NC,751,229
+CHH,Charlotte Hornets (historical),Charlotte Coliseum,Charlotte,NC,751,229
+CHI,Chicago Bulls,United Center,Chicago,IL,597,182
+CLE,Cleveland Cavaliers,Rocket Mortgage FieldHouse,Cleveland,OH,653,199
+DAL,Dallas Mavericks,American Airlines Center,Dallas,TX,430,131
+DEN,Denver Nuggets,Ball Arena,Denver,CO,5280,1609
+DET,Detroit Pistons,Little Caesars Arena,Detroit,MI,600,183
+GSW,Golden State Warriors,Chase Center,San Francisco,CA,16,5
+HOU,Houston Rockets,Toyota Center,Houston,TX,50,15
+IND,Indiana Pacers,Gainbridge Fieldhouse,Indianapolis,IN,715,218
+LAC,Los Angeles Clippers,Intuit Dome,Inglewood,CA,233,71
+LAL,Los Angeles Lakers,Crypto.com Arena,Los Angeles,CA,233,71
+MEM,Memphis Grizzlies,FedExForum,Memphis,TN,338,103
+MIA,Miami Heat,Kaseya Center,Miami,FL,10,3
+MIL,Milwaukee Bucks,Fiserv Forum,Milwaukee,WI,617,188
+MIN,Minnesota Timberwolves,Target Center,Minneapolis,MN,840,256
+NJN,New Jersey Nets (historical),Meadowlands Arena,East Rutherford,NJ,10,3
+NOH,New Orleans Hornets (historical),Smoothie King Center,New Orleans,LA,3,1
+NOK,New Orleans/Oklahoma City Hornets,Paycom Center,Oklahoma City,OK,1198,365
+NOP,New Orleans Pelicans,Smoothie King Center,New Orleans,LA,3,1
+NYK,New York Knicks,Madison Square Garden,New York,NY,43,13
+OKC,Oklahoma City Thunder,Paycom Center,Oklahoma City,OK,1198,365
+ORL,Orlando Magic,Kia Center,Orlando,FL,82,25
+PHI,Philadelphia 76ers,Wells Fargo Center,Philadelphia,PA,39,12
+PHX,Phoenix Suns,Footprint Center,Phoenix,AZ,1086,331
+POR,Portland Trail Blazers,Moda Center,Portland,OR,50,15
+SAC,Sacramento Kings,Golden 1 Center,Sacramento,CA,30,9
+SAS,San Antonio Spurs,Frost Bank Center,San Antonio,TX,650,198
+SEA,Seattle SuperSonics (historical),KeyArena,Seattle,WA,125,38
+TOR,Toronto Raptors,Scotiabank Arena,Toronto,ON,250,76
+UTA,Utah Jazz,Delta Center,Salt Lake City,UT,4226,1288
+VAN,Vancouver Grizzlies (historical),General Motors Place,Vancouver,BC,70,21
+WAS,Washington Wizards,Capital One Arena,Washington,DC,25,8

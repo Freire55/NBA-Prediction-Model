@@ -186,28 +186,37 @@ def main():
     scaler.fit(df.loc[train_mask, rolling_cols].values)
     X_scaled = scaler.transform(df[rolling_cols].values)
 
-    pca = PCA(n_components=4, random_state=42)
+    N_COMPONENTS = 8
+    pca = PCA(n_components=N_COMPONENTS, random_state=42)
     pca.fit(X_scaled[train_mask])
     
     embeddings = pca.transform(X_scaled)
 
-    # 4. Assign agnostic embedding names
-    df["EMBED_1"] = embeddings[:, 0]
-    df["EMBED_2"] = embeddings[:, 1]
-    df["EMBED_3"] = embeddings[:, 2]
-    df["EMBED_4"] = embeddings[:, 3]
+    # 4. Assign agnostic embedding names dynamically
+    embed_cols = []
+    for i in range(1, N_COMPONENTS + 1):
+        col_name = f"EMBED_{i}"
+        df[col_name] = embeddings[:, i - 1]
+        embed_cols.append(col_name)
 
-    output_df = df[["PLAYER_ID", "GAME_DATE", "EMBED_1", "EMBED_2", "EMBED_3", "EMBED_4"]]
+    output_df = df[["PLAYER_ID", "GAME_DATE"] + embed_cols]
 
     output_path = DATA_DIR / OUTPUT_FILE
     output_df.to_csv(output_path, index=False)
     
-    variance_explained = sum(pca.explained_variance_ratio_) * 100
-    logger.info(f"Success! Generated embeddings for {len(output_df):,} player appearances.")
-    logger.info(f"The 3 Principal Components capture {variance_explained:.1f}% of historical playstyle variance.")
-    logger.info("Explained variance ratio:")
+    cum_var = 0.0
+    logger.info(f"Success! Generated {N_COMPONENTS}D embeddings for {len(output_df):,} player appearances.")
+    logger.info("=" * 65)
+    logger.info(f"PCA EXPLAINED VARIANCE BREAKDOWN ({N_COMPONENTS} DIMENSIONS):")
+    logger.info("=" * 65)
     for i, var in enumerate(pca.explained_variance_ratio_, 1):
-        logger.info(f"PC{i}: {var:.3%}")
+        cum_var += var
+        logger.info(f"  Dimension {i} (EMBED_{i}): {var * 100:6.2f}% of variance  |  Cumulative: {cum_var * 100:6.2f}%")
+    logger.info("-" * 65)
+    logger.info(f"  Total Variance (4 dimensions): {sum(pca.explained_variance_ratio_[:4]) * 100:.2f}%")
+    logger.info(f"  Total Variance (8 dimensions): {sum(pca.explained_variance_ratio_[:8]) * 100:.2f}%")
+    logger.info(f"  Additional Gain (Dims 5-8):    +{sum(pca.explained_variance_ratio_[4:8]) * 100:.2f}%")
+    logger.info("=" * 65)
 
 if __name__ == "__main__":
     main()

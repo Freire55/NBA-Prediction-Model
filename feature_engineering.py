@@ -37,6 +37,11 @@ POSSESSION_FT_WEIGHT = 0.44
 DEFAULT_REST_DAYS = 5.0
 DEFAULT_OFF_RATING = 100.0
 
+# Altitude parameters
+ALTITUDE_FILE = DATA_DIR / "team_altitudes.csv"
+ALTITUDE_THRESHOLD_FT = 1000.0
+ALTITUDE_SCALE_FT = 2500.0
+
 # ======================================================
 # Logging Setup
 # ======================================================
@@ -58,6 +63,46 @@ def load_and_sort_data(filepath: Path) -> pd.DataFrame:
     
     return df
 
+
+def load_altitude_map(filepath: Path = ALTITUDE_FILE) -> dict[str, float]:
+    """Loads team altitude mapping from team_altitudes.csv."""
+    if not filepath.exists():
+        logger.warning(f"Altitude file not found at {filepath}, returning empty map.")
+        return {}
+    alt_df = pd.read_csv(filepath)
+    return dict(zip(alt_df["TEAM_ABBREVIATION"], alt_df["ALTITUDE_FT"].astype(float)))
+
+
+def calculate_altitude_advantage(
+    home_alt: pd.Series, 
+    away_alt: pd.Series, 
+    threshold_ft: float = ALTITUDE_THRESHOLD_FT, 
+    scale_ft: float = ALTITUDE_SCALE_FT
+) -> pd.Series:
+    """
+    Computes a non-linear physiological altitude advantage for the home team.
+
+    Physiological rationale:
+    1. Directional Asymmetry: Hypoxia only penalizes teams ascending to higher elevations
+       than their home base (Home Alt > Away Alt). Visiting teams descending to sea level
+       experience no aerobic penalty.
+    2. Threshold Barrier: Atmospheric pressure and oxygen partial pressure decrements
+       below ~1,000 ft difference produce negligible aerobic impact on conditioned athletes.
+    3. Accelerated Non-linear Saturation: Above 3,000-4,000 ft (Salt Lake City @ 4,226 ft,
+       Denver @ 5,280 ft), arterial oxygen saturation drops steeply, causing exponential
+       aerobic fatigue accumulation.
+
+    Formula:
+        diff = Home_Alt - Away_Alt
+        effective_diff = max(0, diff - threshold_ft)
+        advantage = 1.0 - exp(-(effective_diff / scale_ft)^2)
+
+    Returns a continuous advantage score bounded in [0.0, 1.0].
+    """
+    diff = home_alt - away_alt
+    effective_diff = np.maximum(0.0, diff - threshold_ft)
+    advantage = 1.0 - np.exp(-((effective_diff / scale_ft) ** 2))
+    return pd.Series(advantage, index=home_alt.index, name="ALTITUDE_ADVANTAGE")
 
 
 def rolling_mean(series: pd.Series, rolling_window: int = ROLLING_WINDOW) -> pd.Series:
@@ -98,9 +143,44 @@ def add_schedule_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def add_four_factors(df: pd.DataFrame) -> pd.DataFrame:
+    """Calculates the four factors of basketball success."""
+    if 'MATCHUP' not in df.columns:
+        return df
+
+    # Opponent defensive rebounds for team offensive rebounding percentage.
+    # In NBA game data, each GAME_ID contains 2 team rows. Vectorized subtraction:
+    # total game DREB minus team's own DREB yields opponent DREB directly,
+    # completely avoiding fragile string abbreviation merges (e.g., NOH vs. NO).
+    if 'DREB' in df.columns and 'GAME_ID' in df.columns:
+        game_dreb_sum = df.groupby('GAME_ID')['DREB'].transform('sum')
+        game_dreb_count = df.groupby('GAME_ID')['DREB'].transform('count')
+        opp_dreb = np.where(game_dreb_count == 2, game_dreb_sum - df['DREB'], np.nan)
+        df['OPP_DREB'] = pd.Series(opp_dreb, index=df.index).fillna(df['DREB']).fillna(32.0)
+    else:
+        df['OPP_DREB'] = 32.0
+
+    fga = df['FGA'].replace(0, np.nan) if 'FGA' in df.columns else pd.Series(np.nan, index=df.index)
+    fgm = df['FGM'] if 'FGM' in df.columns else pd.Series(0.0, index=df.index)
+    fg3m = df['FG3M'] if 'FG3M' in df.columns else pd.Series(0.0, index=df.index)
+    fta = df['FTA'] if 'FTA' in df.columns else pd.Series(0.0, index=df.index)
+    tov = df['TOV'] if 'TOV' in df.columns else pd.Series(0.0, index=df.index)
+    oreb = df['OREB'] if 'OREB' in df.columns else pd.Series(0.0, index=df.index)
+    opp_dreb = df['OPP_DREB']
+
+    df['FOUR_FACTOR_EFG'] = ((fgm + 0.5 * fg3m) / fga).fillna(0.0)
+    df['FOUR_FACTOR_TOV'] = (tov / (fga + 0.44 * fta + tov).replace(0, np.nan)).fillna(0.0)
+    df['FOUR_FACTOR_OREB'] = (oreb / (oreb + opp_dreb).replace(0, np.nan)).fillna(0.0)
+    df['FOUR_FACTOR_FTR'] = (fta / fga).fillna(0.0)
+
+    df = df.drop(columns=['OPP_DREB', 'OPP_ABBREVIATION'], errors='ignore')
+
+    return df
+
 
 def add_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
     """Calculates chronologically pure rolling averages and strength of schedule."""
+    df = add_four_factors(df)
     team_groups = df.groupby('TEAM_ABBREVIATION')
     
     df['POSSESSIONS'] = df['FGA'] + POSSESSION_FT_WEIGHT * df['FTA'] - df['OREB'] + df['TOV']
@@ -140,37 +220,90 @@ def add_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
     # Map past opponent strength
-    df['OPP_ABBREVIATION'] = df['MATCHUP'].str[-3:]
-    team_strength = df[['GAME_ID', 'TEAM_ABBREVIATION', f'Z_PLUS_MINUS_ROLLING_{ROLLING_WINDOW}']].copy()
-    team_strength = team_strength.rename(columns={f'Z_PLUS_MINUS_ROLLING_{ROLLING_WINDOW}': 'OPP_PRE_GAME_STRENGTH'})
+    # Vectorized pairing by GAME_ID: total game strength minus team's own strength
+    # completely eliminates string matching fragility and expensive merges.
+    strength_col = f'Z_PLUS_MINUS_ROLLING_{ROLLING_WINDOW}'
+    if strength_col in df.columns and 'GAME_ID' in df.columns:
+        game_strength_sum = df.groupby('GAME_ID')[strength_col].transform('sum')
+        game_count = df.groupby('GAME_ID')[strength_col].transform('count')
+        df['OPP_PRE_GAME_STRENGTH'] = np.where(game_count == 2, game_strength_sum - df[strength_col], 0.0)
+    else:
+        df['OPP_PRE_GAME_STRENGTH'] = 0.0
     
-    df = df.merge(team_strength, left_on=['GAME_ID', 'OPP_ABBREVIATION'], right_on=['GAME_ID', 'TEAM_ABBREVIATION'], suffixes=('', '_DROP'))
-    df = df.drop(columns=['TEAM_ABBREVIATION_DROP'])
-    df['OPP_PRE_GAME_STRENGTH'] = df['OPP_PRE_GAME_STRENGTH'].fillna(0)
-    
+    df = df.sort_values(by=["GAME_DATE", "GAME_ID"]).reset_index(drop=True)
+    team_groups = df.groupby('TEAM_ABBREVIATION')
+
     df[f'SOS_ROLLING_{ROLLING_WINDOW}'] = (
-        df.groupby("TEAM_ABBREVIATION")["OPP_PRE_GAME_STRENGTH"]
+        team_groups["OPP_PRE_GAME_STRENGTH"]
         .transform(rolling_mean)
         .fillna(0)
     )
 
     df["SOS_EWMA_3"] = (
-        df.groupby("TEAM_ABBREVIATION")["OPP_PRE_GAME_STRENGTH"]
+        team_groups["OPP_PRE_GAME_STRENGTH"]
         .transform(lambda x: ewma(x, span=3))
         .fillna(0)
     )
 
     df["SOS_EWMA_5"] = (
-        df.groupby("TEAM_ABBREVIATION")["OPP_PRE_GAME_STRENGTH"]
+        team_groups["OPP_PRE_GAME_STRENGTH"]
         .transform(lambda x: ewma(x, span=5))
         .fillna(0)
     )
 
     df["SOS_EWMA_10"] = (
-        df.groupby("TEAM_ABBREVIATION")["OPP_PRE_GAME_STRENGTH"]
+        team_groups["OPP_PRE_GAME_STRENGTH"]
         .transform(lambda x: ewma(x, span=10))
         .fillna(0)
     )
+    
+    four_factor_columns = [
+        'FOUR_FACTOR_EFG',
+        'FOUR_FACTOR_TOV',
+        'FOUR_FACTOR_OREB',
+        'FOUR_FACTOR_FTR',
+    ]
+
+    for col in four_factor_columns:
+        df[f'{col}_ROLLING_{ROLLING_WINDOW}'] = (
+            team_groups[col]
+            .transform(rolling_mean)
+            .fillna(0)
+        )
+
+        for span in EWMA_SPANS:
+            df[f'{col}_EWMA_{span}'] = (
+                team_groups[col]
+                .transform(lambda x, s=span: ewma(x, span=s))
+                .fillna(0)
+            )
+            
+    # Calculate game-level Pace: Possessions per 48 minutes
+    # In NBA team box scores, MIN is total player minutes (240 in regulation: 5 * 48 min).
+    # If MIN is already single-game minutes (<= 100), use as-is.
+    if "MIN" in df.columns:
+        raw_min = pd.to_numeric(df["MIN"], errors="coerce").fillna(240.0)
+        team_mins = np.where(raw_min > 100.0, raw_min / 5.0, raw_min)
+        team_mins = pd.Series(team_mins, index=df.index).replace(0, np.nan).fillna(48.0)
+    else:
+        team_mins = pd.Series(48.0, index=df.index)
+
+    df["PACE"] = (df["POSSESSIONS"] / team_mins) * 48.0
+    df["PACE"] = df["PACE"].fillna(100.0)
+
+    df[f"ROLLING_PACE_{ROLLING_WINDOW}"] = (
+        team_groups["PACE"]
+        .transform(rolling_mean)
+        .fillna(100.0)
+    )
+    df["ROLLING_PACE"] = df[f"ROLLING_PACE_{ROLLING_WINDOW}"]
+
+    for span in EWMA_SPANS:
+        df[f"PACE_EWMA_{span}"] = (
+            team_groups["PACE"]
+            .transform(lambda x, s=span: ewma(x, span=s))
+            .fillna(100.0)
+        )
 
     return df
 
@@ -253,6 +386,62 @@ def build_matchups(df: pd.DataFrame) -> pd.DataFrame:
     matchups_df['DELTA_4_IN_5'] = matchups_df['HOME_4_IN_5'] - matchups_df['AWAY_4_IN_5']
     matchups_df[f'DELTA_SOS_ROLLING_{ROLLING_WINDOW}'] = matchups_df[f'HOME_SOS_ROLLING_{ROLLING_WINDOW}'] - matchups_df[f'AWAY_SOS_ROLLING_{ROLLING_WINDOW}']
     matchups_df['DELTA_ROLLING_OFF_RATING'] = matchups_df['HOME_ROLLING_OFF_RATING'] - matchups_df['AWAY_ROLLING_OFF_RATING']
+    matchups_df[f'DELTA_ROLLING_PACE_{ROLLING_WINDOW}'] = (
+        matchups_df[f'HOME_ROLLING_PACE_{ROLLING_WINDOW}']
+        - matchups_df[f'AWAY_ROLLING_PACE_{ROLLING_WINDOW}']
+    )
+    matchups_df['DELTA_ROLLING_PACE'] = matchups_df[f'DELTA_ROLLING_PACE_{ROLLING_WINDOW}']
+    matchups_df['MATCHUP_EXPECTED_PACE'] = (
+        matchups_df[f'HOME_ROLLING_PACE_{ROLLING_WINDOW}']
+        + matchups_df[f'AWAY_ROLLING_PACE_{ROLLING_WINDOW}']
+    ) / 2.0
+
+    for span in EWMA_SPANS:
+        matchups_df[f'DELTA_PACE_EWMA_{span}'] = (
+            matchups_df[f'HOME_PACE_EWMA_{span}']
+            - matchups_df[f'AWAY_PACE_EWMA_{span}']
+        )
+    
+    # Altitude and Home Court Elevation Advantage
+    alt_map = load_altitude_map()
+    if alt_map and 'HOME_TEAM_ABBREVIATION' in matchups_df.columns:
+        matchups_df['HOME_ALTITUDE'] = matchups_df['HOME_TEAM_ABBREVIATION'].map(alt_map).fillna(0.0)
+        matchups_df['AWAY_ALTITUDE'] = matchups_df['AWAY_TEAM_ABBREVIATION'].map(alt_map).fillna(0.0)
+        matchups_df['DELTA_ALTITUDE'] = matchups_df['HOME_ALTITUDE'] - matchups_df['AWAY_ALTITUDE']
+        matchups_df['ALTITUDE_ADVANTAGE'] = calculate_altitude_advantage(
+            matchups_df['HOME_ALTITUDE'], matchups_df['AWAY_ALTITUDE']
+        )
+        matchups_df['ALTITUDE_B2B_PENALTY'] = (
+            matchups_df['ALTITUDE_ADVANTAGE'] * matchups_df['AWAY_B2B']
+        )
+
+    four_factor_features = [
+        'FOUR_FACTOR_EFG',
+        'FOUR_FACTOR_TOV',
+        'FOUR_FACTOR_OREB',
+        'FOUR_FACTOR_FTR',
+    ]
+
+    for factor in four_factor_features:
+        rolling_col = f'{factor}_ROLLING_{ROLLING_WINDOW}'
+
+        matchups_df[f'DELTA_{factor}_ROLLING_{ROLLING_WINDOW}'] = (
+            matchups_df[f'HOME_{rolling_col}']
+            - matchups_df[f'AWAY_{rolling_col}']
+        )
+
+        for span in EWMA_SPANS:
+            ewma_col = f'{factor}_EWMA_{span}'
+
+            matchups_df[f'DELTA_{factor}_EWMA_{span}'] = (
+                matchups_df[f'HOME_{ewma_col}']
+                - matchups_df[f'AWAY_{ewma_col}']
+            )
+
+    # Net shooting-efficiency matchup signal
+    matchups_df['DELTA_FOUR_FACTORS_NET_EFG'] = (
+        matchups_df['DELTA_FOUR_FACTOR_EFG_ROLLING_8']
+    )
 
     z_feature_cols = [
         col.replace("HOME_", "")
@@ -276,7 +465,8 @@ def build_matchups(df: pd.DataFrame) -> pd.DataFrame:
     raw_box_score_stats = [
         'PTS', 'FGM', 'FGA', 'FG_PCT', 'FG3M', 'FG3A', 'FG3_PCT',
         'FTM', 'FTA', 'FT_PCT', 'OREB', 'DREB', 'REB', 'AST', 'STL',
-        'BLK', 'TOV', 'PF', 'PLUS_MINUS', 'POSSESSIONS'
+        'BLK', 'TOV', 'PF', 'PLUS_MINUS', 'POSSESSIONS', 'PACE', 'MIN',
+        'FOUR_FACTOR_EFG', 'FOUR_FACTOR_TOV', 'FOUR_FACTOR_OREB', 'FOUR_FACTOR_FTR',
     ]
     
     cols_to_drop = []

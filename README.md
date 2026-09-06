@@ -4,11 +4,11 @@
 [![Code Style: Clean & Modular](https://img.shields.io/badge/code%20style-production%20ready-green.svg)]()
 [![Validation: Pandera Contracts](https://img.shields.io/badge/data%20contracts-Pandera-yellow.svg)](https://pandera.readthedocs.io/)
 [![Storage: Apache Parquet](https://img.shields.io/badge/storage-Apache%20Parquet-orange.svg)]()
-[![Tests: Pytest Passing](https://img.shields.io/badge/tests-18%20passed-brightgreen.svg)]()
+[![Tests: Pytest Passing](https://img.shields.io/badge/tests-29%20passed-brightgreen.svg)]()
 
 A production-grade, leak-free machine learning system for predicting NBA regular-season game outcomes strictly using information available prior to tip-off. 
 
-The pipeline bridges sports domain modeling with rigorous machine learning engineering: **era-adjusted pace normalization**, **continuous Margin-of-Victory Elo simulation**, **learned player latent representations (PCA)**, **player volatility & star concentration modeling**, **heterogeneous feature routing**, **chronological cross-validation**, **probability calibration**, and **SLSQP-constrained ensemble optimization**.
+The pipeline bridges sports domain modeling with rigorous machine learning engineering: **era-adjusted pace normalization**, **Dean Oliver Four Factors modeling**, **arena altitude & rest penalties**, **continuous Margin-of-Victory Elo simulation**, **learned player latent representations (PCA)**, **player volatility & star hierarchy modeling**, **heterogeneous feature routing**, **multi-stage sequential backward feature selection (SBS)**, **chronological cross-validation**, **probability calibration**, and **SLSQP-constrained ensemble optimization**.
 
 ---
 
@@ -18,12 +18,12 @@ The system is evaluated on every NBA regular season game from **2021 through pre
 
 | Model Architecture | Feature Representation | Test Accuracy | Log Loss | Brier Score | ROC-AUC | Ensemble Weight |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **Logistic Regression** | Differentials (`DELTA_`) | 67.2% | 0.609 | 0.211 | 0.723 | 6.0% |
-| **XGBoost (Hist)** | Absolute (`HOME_`, `AWAY_`) | 66.4% | 0.616 | 0.214 | 0.721 | 39.3% |
-| **Deep Neural Net (MLP)** | Differentials + Latent (`EMBED_`) | 67.6% | 0.610 | 0.210 | 0.724 | 54.6% |
-| **Meta-Ensemble (SLSQP)** | **Optimal Constrained Blend** | **67.6%** | **0.606** | **0.209** | **0.732** | **100.0%** |
+| **Logistic Regression** | Differentials (`DELTA_`) | 66.3% | 0.615 | 0.213 | 0.717 | 11.3% |
+| **XGBoost (Hist)** | Absolute (`HOME_`, `AWAY_`) | 66.6% | 0.613 | 0.213 | 0.730 | 34.4% |
+| **Deep Neural Net (MLP)** | Differentials + Latent (`EMBED_`) | 66.8% | 0.611 | 0.211 | 0.721 | 54.3% |
+| **Meta-Ensemble (SLSQP)** | **Optimal Constrained Blend** | **67.1%** | **0.606** | **0.209** | **0.731** | **100.0%** |
 
-*Key Takeaway:* The constrained validation ensemble achieves the highest overall probability calibration and discrimination, outperforming individual base learners across **log loss (0.606), Brier score (0.209), and ROC-AUC (0.732)** while achieving **67.6% accuracy**, successfully capturing non-linear interactions between player representations and team efficiency profiles.
+*Key Takeaway:* The constrained validation ensemble achieves the highest overall probability calibration and discrimination, outperforming individual base learners across **log loss (0.606), Brier score (0.209), and ROC-AUC (0.731)** while achieving **67.1% accuracy on 6,140 test games**, successfully synthesizing non-linear tree splits, linear stability, and deep personnel embeddings.
 
 ---
 
@@ -44,10 +44,10 @@ The system is evaluated on every NBA regular season game from **2021 through pre
                        │                                           │
                        ▼                                           ▼
            [Team Feature Pipeline]                         [PCA Projection]
-         • Continuous MOV-Elo engine                  4D latent vector representation
-         • EWMA Offensive Ratings (span 3,5,10)                    │
-         • Schedule density (B2B, 3-in-4)                          ▼
-                       │                             [Player Volatility & Lineup]
+         • Continuous MOV-Elo engine                  8D latent vector representation
+         • Dean Oliver Four Factors (eFG, TOV, ORB, FTR)           │
+         • Dynamic Game Pace (Poss/48m)                            ▼
+         • Arena Altitude & Rest Congestion          [Player Volatility & Lineup]
                        │                             • Capped Game Score (μ ± 2.5σ)
                        │                             • Robust Expected Impact (μ - 0.35σ)
                        │                             • Star Duo Share (Top 2 Concentration)
@@ -65,11 +65,16 @@ The system is evaluated on every NBA regular season game from **2021 through pre
                           Test:  2021–Pres  ( 6,140 games)
                                              │
                                              ▼
+                       [Multi-Stage SBS Feature Selection]
+                     Weakest-to-strongest importance ranking,
+                   dual-guardrail calibration & frozen ensemble
+                                             │
+                                             ▼
                              [Heterogeneous Feature Routing]
                   ┌──────────────────────────┼──────────────────────────┐
                   ▼                          ▼                          ▼
         Linear Representation      Non-Linear Trees           Neural Latent Vector
-            (LR: DELTA_)            (XGB: HOME/AWAY)         (MLP: DELTA_ + EMBED_)
+            (LR: DELTA_)          (XGB: HOME/AWAY/EMBED)     (MLP: DELTA_ + EMBED_)
                   │                          │                          │
                   ▼                          ▼                          ▼
          TimeSeriesSplit CV         TimeSeriesSplit CV         TimeSeriesSplit CV
@@ -111,30 +116,68 @@ Rather than relying on discrete win/loss tracking, team strength is continuously
   $$\text{Elo}_{\text{new\_season}} = 0.75 \times \text{Elo}_{\text{prev}} + 0.25 \times 1500$$
 - **High-Performance Vectorization:** Executed via vectorized home/away pairing and native NumPy array iteration, processing 62,500 games in **0.27 seconds** (an 80x speedup over standard row-by-row iteration).
 
-### 3. Latent Player Representation Learning (PCA)
+### 3. Latent Player Representation Learning (8D PCA)
 Traditional sports models aggregate raw player averages, which conflate player role with efficiency. This pipeline learns continuous player representations:
 - **14 per-minute rate statistics:** Points, FGM, FGA, 3PM, 3PA, FTM, FTA, OREB, DREB, AST, STL, BLK, TOV, PF per minute.
 - **8 advanced rate metrics:** True Shooting % (TS%), Effective Field Goal % (eFG%), Turnover %, Fantasy Score, Hollinger Game Score, Usage Proxy, Assist-to-Turnover Ratio, and Player Impact Estimate (PIE) proxy.
 - Profiles are smoothed with an exponentially weighted moving average (half-life of 20 games, shifted by 1 game).
-- A `StandardScaler` and `PCA` (fitted strictly on training seasons $\le 2018$) project these 22 metrics into a **4-dimensional latent embedding space** capturing:
-  1. *Scoring volume & primary creation*
+- A `StandardScaler` and `PCA` (fitted strictly on training seasons $\le 2018$) project these 22 metrics into an **8-dimensional latent embedding space** capturing ~85% of total historical playstyle variance across archetypes:
+  1. *Scoring volume & primary shot creation*
   2. *Interior rim protection vs. perimeter spacing*
   3. *Playmaking efficiency & ball security*
   4. *Defensive activity & rebounding rate*
+  5. *Free-throw generation & downhill pressure*
+  6. *Perimeter shooting gravity & 3PT efficiency*
+  7. *Turnover conservatism vs. high-risk passing*
+  8. *Secondary playmaking & rotational wing hustle*
+- Roster aggregation computes differential sum, mean, standard deviation, and maximums across active lineups (`EMBED_DELTA_`), quantifying tactical mismatches at tip-off.
 
-### 4. Player Volatility & Star Duo Concentration
-Basketball is driven by top-end star talent and rotation dynamics:
+### 4. Player Volatility, Star Hierarchy & Lineup Availability
+Basketball is driven by top-end star talent, rotation depth, and lineup health:
 - **Outlier Capping:** Individual Game Scores are capped at $\mu_{\text{rolling}} \pm 2.5 \sigma_{\text{volatility}}$ to reduce sensitivity to fluke performances.
 - **Robust Expected Impact:** Penalizes high-variance performances: $\text{Impact} = \mu - 0.35 \sigma$.
-- **Star Duo Concentration:** Measures the share of total expected team production accounted for by the top-2 contributors (`TOP_2_IMPACT_SHARE`). The differential `DELTA_ACTIVE_ROSTER_TOP_2_SHARE` directly signals whether a game is a "Superteam vs. Balanced Depth" matchup.
+- **Unified Star, Duo, Trio & Bench Hierarchy:** Computed using minutes-weighted positive expected impact ($\text{Form} \times \text{Minutes}$), strictly enforcing $0 \le \text{Star} \le \text{Top 2} \le \text{Top 3} \le 1.0$ and $\text{Top 3} + \text{Bench} = 1.0$. Differentials like `DELTA_ACTIVE_ROSTER_TOP_2_SHARE` and `DELTA_ACTIVE_ROSTER_BENCH_SHARE` quantify superteam concentration versus rotation depth.
+- **Lineup Health & Availability Deficit:** Compares tonight's active roster production against the team's rolling 10-game roster baseline (`LINEUP_AVAILABILITY_RATIO` and `LINEUP_MISSING_PRODUCTION`), immediately alerting models when stars are resting or injured on back-to-backs.
+- **Rolling Team Identity:** Tracks rolling 10-game EWMA concentration (`ROLLING_STAR_SHARE_10`, `ROLLING_TOP_2_SHARE_10`) to capture whether a team is structurally heliocentric or depth-oriented.
+- **Acute Fatigue Surge:** Captures short-term minutes spikes over medium-term baselines (`FATIGUE_EWMA_MINUTES_3 - FATIGUE_EWMA_MINUTES_10`).
 
-### 5. Heterogeneous Feature Selection & Routing
+### 5. Dean Oliver Four Factors & Dynamic Pace Normalization
+Dean Oliver's "Four Factors of Basketball Success" dictate 90%+ of NBA game outcomes:
+- **Shooting (40% weight):** Effective Field Goal % ($eFG\% = \frac{\text{FGM} + 0.5 \times \text{3PM}}{\text{FGA}}$)
+- **Turnovers (25% weight):** Turnover Rate ($TOV\% = \frac{\text{TOV}}{\text{FGA} + 0.44 \times \text{FTA} + \text{TOV}}$)
+- **Rebounding (20% weight):** Offensive Rebound % ($OREB\% = \frac{\text{OREB}}{\text{OREB} + \text{OPP\_DREB}}$), computed via vectorized leak-free game pairing.
+- **Free Throws (15% weight):** Free Throw Rate ($FTR = \frac{\text{FTA}}{\text{FGA}}$)
+- **Game-Pace Normalization:** Measures possessions per 48 minutes ($Pace = \frac{\text{Possessions}}{\text{Team Mins}} \times 48$), tracking multi-horizon EWMA (spans 3, 5, 10) and expected game pace (`MATCHUP_EXPECTED_PACE`).
+
+### 6. Arena Altitude, Acclimation & Schedule Fatigue
+High-altitude environments like Denver (5,280 ft) and Salt Lake City (4,226 ft) impose severe physiological strain on unacclimated visiting teams:
+- **Elevation Mapping (`data/team_altitudes.csv`):** Comprehensive arena elevation data for all 30 active franchises plus historical venues (Seattle KeyArena, Vancouver GM Place, Charlotte Coliseum, etc.).
+- **Non-Linear Physiological Advantage:** Models oxygen deficit with a 1,000-foot threshold and acclimation dampening:
+  $$\text{Advantage} = \max\left(0, \frac{\text{Alt}_{\text{home}} - \max(\text{Alt}_{\text{away}}, 1000)}{5280}\right)$$
+  Visiting Denver from sea level (Miami, Boston) incurs maximum penalty, while visiting from altitude (Utah) incurs negligible effect.
+- **Compound Fatigue Penalty (`ALTITUDE_B2B_PENALTY`):** Interacts altitude disadvantage with schedule congestion (`AWAY_B2B`), penalizing tired teams playing on back-to-backs at high elevation.
+
+### 7. Heterogeneous Feature Selection & Routing
 Rather than feeding an identical feature matrix to every model, the system leverages structural inductive biases:
-- **Logistic Regression (`DELTA_`):** Receives 111 pre-computed home-minus-away differentials. Linear models lack interaction terms and benefit heavily from pre-differenced comparative metrics.
-- **XGBoost (`HOME_`, `AWAY_`):** Receives 101 absolute team metrics with non-era-normalized values. Decision trees learn decision boundaries and feature ratios natively without requiring differencing.
-- **Multi-Layer Perceptron (`DELTA_` + `EMBED_`):** Receives 135 features combining engineered team differentials with latent player embeddings, utilizing dense non-linear layers to model synergy between team metrics and latent personnel vectors.
+- **Logistic Regression (`DELTA_`):** Receives 146 pre-computed home-minus-away differentials. Linear models lack interaction terms and benefit heavily from pre-differenced comparative metrics.
+- **XGBoost (`HOME_`, `AWAY_`, `EMBED_`):** Receives 212 absolute team metrics, non-linear latent embeddings, and schedule features. Decision trees learn decision boundaries, threshold interactions, and feature ratios natively without requiring differencing.
+- **Multi-Layer Perceptron (`DELTA_` + `EMBED_`):** Receives 199 features combining engineered team differentials with latent player embeddings, utilizing dense non-linear layers to model synergy between team metrics and latent personnel vectors.
 
-### 6. Probability Calibration & Constrained Ensemble
+### 8. Multi-Stage Sequential Backward Selection (SBS) Engine
+High-dimensional sports feature sets suffer from collinearity, noise, and cross-architecture interference. Rather than naive global feature dropping, this project implements a specialized **Multi-Stage Sequential Backward Selection (SBS)** engine ([`optimize_features.py`](optimize_features.py)):
+- **Cross-Validation Importance Sorting:** Ranks candidate features across `TimeSeriesSplit` cross-validation folds (using model coefficients, tree gain, and permutation importance) so candidates are tested from weakest to strongest.
+- **Fast-Track Screening:** Uses frozen ensemble weights and pre-cached out-of-fold predictions to evaluate candidate drops in milliseconds without retraining uninvolved models.
+- **Dual-Guardrail Calibration Verification:**
+  1. *Validation Ensemble Loss:* Candidate feature pruning must improve or preserve overall ensemble cross-entropy log loss.
+  2. *Isolated Standalone Safety:* Candidate pruning must not degrade the target base learner's standalone calibrated loss beyond a strict safety margin ($\Delta \le +0.0005$), preventing harmful model degradation.
+- **Pruned Features:** Prunes noisy collinear features (e.g. redundant 3PT EWMA horizons in LR and redundant max embedding dims in XGB) while retaining all deep personnel synergy in the MLP.
+- **Single-Boolean Configuration Toggle:** Pruned features are registered in [`training/config.py`](training/config.py) under `optimized_features_to_remove` and activated via a single flag:
+  ```python
+  prune_optimized_features: bool = True  # Toggle to False to instantly revert to full baseline features
+  ```
+  Can also be toggled via environment variable: `USE_OPTIMIZED_FEATURES=1 python train_models.py`.
+
+### 9. Probability Calibration & Constrained Ensemble
 A model predicting a 70% win probability should win exactly 70 out of 100 times. In uncalibrated models (especially gradient boosted trees), log loss is distorted by overconfident tail predictions.
 - **Cross-Validated Sigmoid Calibration:** Every base estimator is calibrated using Platt scaling (`CalibratedClassifierCV`) during cross-validation.
 - **SLSQP Ensemble Formulation:** Ensemble weights $\mathbf{w}$ are learned by directly minimizing cross-entropy log loss on out-of-fold validation predictions:
@@ -149,8 +192,9 @@ Target and temporal leakage are catastrophic in sports modeling. This repository
 
 1. **Strict Temporal Shifting:** All rolling aggregations (`rolling_mean`, `ewma`) enforce a strict `.shift(1)` lag. Game $T$ features have zero access to game $T$ outcomes.
 2. **Automated Perturbation Invariance Tests ([`tests/leakage_test.py`](tests/leakage_test.py)):** An automated test suite artificially mutates game $T$'s post-game statistics (scoring 300 points) and asserts that game $T$'s pre-game features remain **100% bitwise identical** (`assert orig == pert, abs=1e-9`).
-3. **Defensive Post-Game Blocklist:** [`training/data.py`](training/data.py) explicitly filters out any column containing post-game box-score stats (`PTS`, `FGM`, `PLUS_MINUS`, `WIN`, etc.) to prevent tree models from greedily picking up leakage.
+3. **Defensive Post-Game Blocklist:** [`training/data.py`](training/data.py) explicitly filters out any column containing post-game box-score stats (`PTS`, `FGM`, `PLUS_MINUS`, `PACE`, `MIN`, `WIN`, etc.) to prevent tree models from greedily picking up leakage.
 4. **Pandera Schema Contracts ([`data/schemas.py`](data/schemas.py)):** Declarative schemas validate raw team box scores, player logs, and final ML feature matrices, asserting non-negative bounds, probability ranges, and zero unexpected NaNs.
+5. **Robust Vectorized Opponent Pairing:** Opponent defensive rebounds and strength mapping are performed strictly via $O(1)$ vectorized `GAME_ID` grouping (`np.where(game_count == 2, game_strength_sum - own_strength, 0.0)`), eliminating string-matching fragility and cross-game leakage.
 
 ---
 
@@ -163,7 +207,7 @@ Target and temporal leakage are catastrophic in sports modeling. This repository
   - Input dataset SHA-256 fingerprint
   - Platform architecture & CPU core counts
 - **Thread Contention Optimization:** Nested parallelism in cross-validation is explicitly managed (`n_jobs=1` per search estimator with `n_jobs=-1` at the CV fold level) to eliminate CPU cache thrashing.
-- **Automated Test Suite:** 18 comprehensive unit tests covering data splitting, Elo mechanics, schema validation, leakage prevention, ensemble optimization, and feature selection.
+- **Automated Test Suite:** 29 comprehensive unit tests covering data splitting, Elo mechanics, altitude advantage, Four Factors, pace normalization, schema validation, leakage prevention, star/duo/trio share hierarchy, ensemble optimization, and SBS feature selection.
 
 ---
 
@@ -173,15 +217,16 @@ Target and temporal leakage are catastrophic in sports modeling. This repository
 nba-prediction-model/
 ├── data/
 │   ├── schemas.py                       # Pandera data contracts & validation schemas
+│   ├── team_altitudes.csv               # Arena elevation lookup table (30 teams + historical)
 │   ├── raw_historical_nba.csv           # Raw team box scores (fetch_history.py)
 │   ├── raw_player_game_logs.csv         # Raw player box scores (fetch_player_game_logs.py)
 │   ├── era_adjusted_nba.csv             # Season-relative z-scores (era_adjustment.py)
-│   ├── player_embeddings.csv            # PCA player embeddings (generate_players_embedding.py)
+│   ├── player_embeddings.csv            # 8D PCA player embeddings (generate_players_embedding.py)
 │   ├── ml_ready_matchups.csv            # Team matchup features (feature_engineering.py)
 │   └── ml_ready_matchups_players.parquet# Final ML dataset (feature_engineering_players.py)
 │
 ├── training/
-│   ├── config.py                        # TrainingConfig, metadata tracking & grids
+│   ├── config.py                        # TrainingConfig, metadata tracking, grids & SBS toggle
 │   ├── data.py                          # Parquet/CSV ingestion & heterogeneous routing
 │   ├── tuning.py                        # TimeSeriesSplit CV search & calibration
 │   ├── training.py                      # Retraining on combined train+val sets
@@ -194,20 +239,23 @@ nba-prediction-model/
 ├── tests/
 │   ├── data_test.py                     # Chronological split & routing tests
 │   ├── ensemble_test.py                 # SLSQP weight optimization tests
-│   ├── feature_engineering_test.py     # Schedule, rest & Elo direction tests
+│   ├── feature_engineering_test.py     # Schedule, rest, Four Factors, Pace & Altitude tests
 │   ├── leakage_test.py                  # Strict perturbation & shift invariance tests
 │   ├── model_test.py                    # Classifier calibration tests
-│   ├── optimize_features_test.py        # Candidate deduplication & fast-track tests
+│   ├── optimize_features_test.py        # Candidate deduplication, fast-track & SBS tests
 │   ├── schema_test.py                   # Pandera schema enforcement tests
-│   └── utility_test.py                  # Metadata reproducibility & JSON tests
+│   └── utility_test.py                  # Metadata reproducibility & feature toggle tests
+│
+├── models/
+│   └── example_run/                     # Tracked reference run with pruned features & diagnostics
 │
 ├── fetch_history.py                     # Scrapes team box scores via nba_api
 ├── fetch_player_game_logs.py            # Scrapes player game logs via nba_api
 ├── era_adjustment.py                    # Statistical era normalization
-├── feature_engineering.py               # Elo engine & rolling team statistics
-├── generate_players_embedding.py        # Batched EWMA & PCA latent representations
+├── feature_engineering.py               # Four Factors, Pace, Altitude & Elo engine
+├── generate_players_embedding.py        # 8D PCA latent representations
 ├── feature_engineering_players.py       # Player aggregation & star duo share
-├── optimize_features.py                 # Multi-stage sequential backward selection
+├── optimize_features.py                 # Multi-stage sequential backward selection engine
 ├── train_models.py                      # Primary end-to-end training pipeline
 ├── requirements.txt                     # Core dependencies
 └── README.md
@@ -236,7 +284,7 @@ pip install pyarrow pandera
 ```bash
 pytest
 ```
-*Executes all 18 unit and leakage tests in ~3 seconds.*
+*Executes all 29 unit, leakage, and integration tests in ~3 seconds.*
 
 ### 3. Feature Generation Pipeline
 ```bash
@@ -247,20 +295,32 @@ python fetch_player_game_logs.py
 # 2. Compute era adjustments
 python era_adjustment.py
 
-# 3. Simulate continuous Elo ratings & team rolling stats
+# 3. Simulate continuous Elo ratings, Four Factors, Pace, & Altitude
 python feature_engineering.py
 
-# 4. Generate PCA player embeddings
+# 4. Generate 8D PCA player embeddings
 python generate_players_embedding.py
 
 # 5. Aggregate player features & produce final matchup dataset
 python feature_engineering_players.py
 ```
 
-### 4. Train Models & Generate Explainability Reports
+### 4. Optional: Feature Selection Optimization (SBS)
+```bash
+python optimize_features.py
+```
+Runs the multi-stage SBS engine to identify redundant or noisy features using CV importance ranking and dual-guardrail validation checks.
+
+### 5. Train Models & Generate Diagnostic Reports
 ```bash
 python train_models.py
 ```
+> [!TIP]
+> By default, `train_models.py` activates the SBS-pruned feature configuration (`prune_optimized_features: bool = True` in [`training/config.py`](training/config.py)). To instantly evaluate on the unpruned full feature baseline, set `prune_optimized_features = False` in config or pass the environment override:
+> ```bash
+> USE_OPTIMIZED_FEATURES=0 python train_models.py
+> ```
+
 This executes the full pipeline:
 - Ingests dataset via Parquet
 - Executes `TimeSeriesSplit` cross-validation for MLP, XGBoost, and Logistic Regression

@@ -6,21 +6,52 @@
     ],
     "xgb_prefixes": [
         "HOME_",
-        "AWAY_"
+        "AWAY_",
+        "EMBED_"
     ],
     "mlp_prefixes": [
         "DELTA_",
-        "EMBED_DELTA_"
+        "EMBED_"
     ],
     "extra_features": [
         "REST_ADVANTAGE",
         "HOME_B2B",
         "AWAY_B2B",
-        "SEASON_YEAR"
+        "SEASON_YEAR",
+        "ALTITUDE_ADVANTAGE",
+        "ALTITUDE_B2B_PENALTY",
+        "MATCHUP_EXPECTED_PACE"
     ],
+    "features_to_remove": {
+        "mlp": [
+            "DELTA_ROLLING_PACE"
+        ],
+        "xgb": [
+            "HOME_IS_AWAY",
+            "AWAY_IS_AWAY",
+            "HOME_VIDEO_AVAILABLE",
+            "AWAY_VIDEO_AVAILABLE",
+            "HOME_AWAY_GROUP",
+            "AWAY_AWAY_GROUP",
+            "AWAY_SEASON_ID",
+            "HOME_SEASON_YEAR",
+            "AWAY_SEASON_YEAR",
+            "HOME_ROLLING_PACE",
+            "AWAY_ROLLING_PACE",
+            "EMBED_DELTA_1_MAX"
+        ],
+        "lr": [
+            "DELTA_ROLLING_PACE",
+            "DELTA_Z_FG3A_EWMA_3",
+            "DELTA_Z_FG3A_EWMA_5",
+            "DELTA_SOS_ROLLING_8",
+            "DELTA_ACTIVE_ROSTER_EXPECTED_FTR",
+            "HOME_B2B"
+        ]
+    },
     "random_seed": 42,
     "cv_folds": 5,
-    "n_shap_samples": 3000,
+    "n_shap_samples": 1000,
     "permutation_repeats": 20,
     "calibration_bins": 10,
     "mlp_search_iterations": 30,
@@ -74,7 +105,7 @@
             128
         ],
         "max_iter": [
-            1000
+            500
         ]
     },
     "xgb_grid": {

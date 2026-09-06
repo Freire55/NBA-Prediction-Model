@@ -105,3 +105,40 @@ def test_partial_fast_track_baseline_matching(mock_training_data):
     # Removing nothing yields exact same loss (diff = 0.0)
     repeat_loss = partial_fast_track("lr", reduced, base_estimators, cached_probs, weights)
     assert pytest.approx(base_loss - repeat_loss, abs=1e-9) == 0.0
+
+
+def test_get_model_importance_ranking():
+    from optimize_features import get_model_importance
+    
+    np.random.seed(42)
+    n = 100
+    # Predictive feature correlates with target; noise feature has zero signal
+    x_pred = np.random.randn(n)
+    x_noise = np.random.randn(n)
+    y = (x_pred > 0).astype(int)
+    
+    X = pd.DataFrame({"noise": x_noise, "signal": x_pred})
+    clf = LogisticRegression(random_state=42)
+    clf.fit(X, y)
+    
+    ranked = get_model_importance(clf, X, y, ["noise", "signal"], random_seed=42)
+    # The noise feature must be ranked weaker (first in the queue) than the signal feature
+    assert ranked[0] == "noise"
+    assert ranked[1] == "signal"
+
+
+def test_fit_and_calibrate_single_model(mock_training_data):
+    from optimize_features import fit_and_calibrate_single_model
+    
+    removals = {"mlp": [], "xgb": [], "lr": []}
+    reduced = apply_model_specific_reduction(mock_training_data, removals)
+    base_lr = LogisticRegression(random_state=42)
+    
+    cal_lr, probs, standalone_loss = fit_and_calibrate_single_model(
+        "lr", base_lr, reduced, cv_folds=2
+    )
+    
+    assert cal_lr is not None
+    assert len(probs) == len(mock_training_data.y_val)
+    assert isinstance(standalone_loss, float)
+    assert 0.0 < standalone_loss < 2.0

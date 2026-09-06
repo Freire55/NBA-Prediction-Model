@@ -50,7 +50,8 @@ def get_model_features(
     post_game_stats = [
         "PTS", "FGM", "FGA", "FG_PCT", "FG3M", "FG3A", "FG3_PCT",
         "FTM", "FTA", "FT_PCT", "OREB", "DREB", "REB", "AST", "STL",
-        "BLK", "TOV", "PF", "PLUS_MINUS", "POSSESSIONS", "WL", "WIN",
+        "BLK", "TOV", "PF", "PLUS_MINUS", "POSSESSIONS", "PACE", "MIN", "WL", "WIN",
+        "FOUR_FACTOR_EFG", "FOUR_FACTOR_TOV", "FOUR_FACTOR_OREB", "FOUR_FACTOR_FTR",
     ]
     post_game_cols = {
         f"{prefix}{stat}"

@@ -63,3 +63,20 @@ def test_get_experiment_metadata_reproducibility():
     assert "git_branch" in metadata
     assert "git_dirty" in metadata
     assert "dataset_version" in metadata
+
+
+def test_prune_optimized_features_toggle():
+    """Verifies that prune_optimized_features boolean cleanly toggles feature pruning."""
+    import os
+    if "USE_OPTIMIZED_FEATURES" in os.environ:
+        del os.environ["USE_OPTIMIZED_FEATURES"]
+
+    config_enabled = TrainingConfig(prune_optimized_features=True)
+    assert config_enabled.prune_optimized_features is True
+    assert "EMBED_DELTA_1_MAX" in config_enabled.features_to_remove["xgb"]
+    assert "HOME_B2B" in config_enabled.features_to_remove["lr"]
+
+    config_disabled = TrainingConfig(prune_optimized_features=False)
+    assert config_disabled.prune_optimized_features is False
+    assert "EMBED_DELTA_1_MAX" not in config_disabled.features_to_remove["xgb"]
+    assert "HOME_B2B" not in config_disabled.features_to_remove["lr"]

@@ -161,7 +161,7 @@ class TrainingConfig:
     )
     
     xgb_prefixes: list[str] = field(
-        default_factory=lambda: ["HOME_", "AWAY_"]
+        default_factory=lambda: ["HOME_", "AWAY_", "EMBED_"]
     )
     
     mlp_prefixes: list[str] = field(
@@ -174,6 +174,9 @@ class TrainingConfig:
             "HOME_B2B",
             "AWAY_B2B",
             "SEASON_YEAR",
+            "ALTITUDE_ADVANTAGE",
+            "ALTITUDE_B2B_PENALTY",
+            "MATCHUP_EXPECTED_PACE",
         ]
     )
 
@@ -181,11 +184,49 @@ class TrainingConfig:
     # Feature Pruning 
     # ======================================================
 
-    features_to_remove: dict[str, list[str]] = field(
+    # Set to True to prune the SBS-optimized redundant/noisy features (recommended).
+    # Set to False to retain the full baseline feature set.
+    prune_optimized_features: bool = True
+
+    # SBS-identified redundant/noisy features to prune when prune_optimized_features is True
+    optimized_features_to_remove: dict[str, list[str]] = field(
         default_factory=lambda: {
             "mlp": [],
-            "xgb": [],
-            "lr": []
+            "xgb": [
+                "EMBED_DELTA_1_MAX",
+            ],
+            "lr": [
+                "DELTA_Z_FG3A_EWMA_3",
+                "DELTA_Z_FG3A_EWMA_5",
+                "DELTA_SOS_ROLLING_8",
+                "DELTA_ACTIVE_ROSTER_EXPECTED_FTR",
+                "HOME_B2B",
+            ],
+        }
+    )
+
+    # Base structural features always removed across architectures
+    features_to_remove: dict[str, list[str]] = field(
+        default_factory=lambda: {
+            "mlp": [
+                "DELTA_ROLLING_PACE",
+            ],
+            "xgb": [
+                "HOME_IS_AWAY",
+                "AWAY_IS_AWAY",
+                "HOME_VIDEO_AVAILABLE",
+                "AWAY_VIDEO_AVAILABLE",
+                "HOME_AWAY_GROUP",
+                "AWAY_AWAY_GROUP",
+                "AWAY_SEASON_ID",
+                "HOME_SEASON_YEAR",
+                "AWAY_SEASON_YEAR",
+                "HOME_ROLLING_PACE",
+                "AWAY_ROLLING_PACE",
+            ],
+            "lr": [
+                "DELTA_ROLLING_PACE",
+            ],
         }
     )
 
@@ -252,6 +293,19 @@ class TrainingConfig:
             "solver": ["lbfgs", "liblinear"],
         }
     )
+
+    def __post_init__(self) -> None:
+        """Applies feature pruning if prune_optimized_features is True or via environment override."""
+        env_override = os.environ.get("USE_OPTIMIZED_FEATURES")
+        if env_override is not None:
+            self.prune_optimized_features = (env_override == "1")
+
+        if self.prune_optimized_features:
+            for m in ["mlp", "xgb", "lr"]:
+                existing = set(self.features_to_remove.get(m, []))
+                for feat in self.optimized_features_to_remove.get(m, []):
+                    if feat not in existing:
+                        self.features_to_remove[m].append(feat)
 
     def to_dict(self) -> dict[str, Any]:
         """Returns the configuration as a serializable dictionary."""

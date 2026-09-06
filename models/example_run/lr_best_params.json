@@ -1,4 +1,4 @@
 {
     "C": 0.1,
-    "solver": "lbfgs"
+    "solver": "liblinear"
 }

@@ -11,6 +11,7 @@ env/
 
 # Data files & generated datasets (large artifacts)
 data/*.csv
+!data/team_altitudes.csv
 data/*.parquet
 data/*.feather
 data/*.h5
