@@ -162,99 +162,91 @@ def tune_base_models(
     # --------------------------------------------------
     # Probability calibration (Platt / sigmoid scaling)
     # --------------------------------------------------
-    
     logger.info("      Applying cross-validated calibration to base models...")
-
-    mlp_calibrated = CalibratedClassifierCV(
-        clone(mlp_search.best_estimator_),
-        method="sigmoid",
-        cv=tscv,
-        n_jobs=-1
-    )
-    mlp_calibrated.fit(
-        data.mlp.X_train_processed,
-        data.y_train,
-    )
-
-    xgb_calibrated = CalibratedClassifierCV(
-        clone(xgb_search.best_estimator_),
-        method="sigmoid",
-        cv=tscv,
-        n_jobs=-1
-    )
-    xgb_calibrated.fit(
-        data.xgb.X_train,
-        data.y_train,
-    )
-
-    lr_calibrated = CalibratedClassifierCV(
-        clone(lr_search.best_estimator_),
-        method="sigmoid",
-        cv=tscv,
-        n_jobs=-1
-    )
-    lr_calibrated.fit(
-        data.lr.X_train_processed,
-        data.y_train,
+    mlp_calibrated, xgb_calibrated, lr_calibrated = calibrate_best_models(
+        mlp_search.best_estimator_,
+        xgb_search.best_estimator_,
+        lr_search.best_estimator_,
+        data,
+        tscv,
     )
 
     # --------------------------------------------------
     # Save tuning artifacts
     # --------------------------------------------------
-
-    save_json(
-        mlp_search.best_params_,
-        output_dir / MLP_PARAMS_FILE,
-    )
-
-    save_json(
-        xgb_search.best_params_,
-        output_dir / XGB_PARAMS_FILE,
-    )
-
-    save_json(
-        lr_search.best_params_,
-        output_dir / LR_PARAMS_FILE,
-    )
-
-    pd.DataFrame(
-        mlp_search.cv_results_
-    ).to_csv(
-        output_dir / MLP_RESULTS_FILE,
-        index=False,
-    )
-
-    pd.DataFrame(
-        xgb_search.cv_results_
-    ).to_csv(
-        output_dir / XGB_RESULTS_FILE,
-        index=False,
-    )
-
-    pd.DataFrame(
-        lr_search.cv_results_
-    ).to_csv(
-        output_dir / LR_RESULTS_FILE,
-        index=False,
-    )
+    save_tuning_results(mlp_search, xgb_search, lr_search, output_dir)
 
     # --------------------------------------------------
     # Package into ModelArtifacts
     # --------------------------------------------------
-
     mlp_artifacts = ModelArtifacts(
         feature_set=data.mlp,
         model=mlp_calibrated,
     )
-    
     xgb_artifacts = ModelArtifacts(
         feature_set=data.xgb,
         model=xgb_calibrated,
     )
-    
     lr_artifacts = ModelArtifacts(
         feature_set=data.lr,
         model=lr_calibrated,
     )
 
     return mlp_artifacts, xgb_artifacts, lr_artifacts
+
+
+def calibrate_best_models(
+    mlp_estimator,
+    xgb_estimator,
+    lr_estimator,
+    data: TrainingData,
+    tscv: TimeSeriesSplit,
+) -> Tuple[CalibratedClassifierCV, CalibratedClassifierCV, CalibratedClassifierCV]:
+    """Fits cross-validated sigmoid probability calibration on the best estimators."""
+    mlp_calibrated = CalibratedClassifierCV(
+        clone(mlp_estimator),
+        method="sigmoid",
+        cv=tscv,
+        n_jobs=-1,
+    )
+    mlp_calibrated.fit(data.mlp.X_train_processed, data.y_train)
+
+    xgb_calibrated = CalibratedClassifierCV(
+        clone(xgb_estimator),
+        method="sigmoid",
+        cv=tscv,
+        n_jobs=-1,
+    )
+    xgb_calibrated.fit(data.xgb.X_train, data.y_train)
+
+    lr_calibrated = CalibratedClassifierCV(
+        clone(lr_estimator),
+        method="sigmoid",
+        cv=tscv,
+        n_jobs=-1,
+    )
+    lr_calibrated.fit(data.lr.X_train_processed, data.y_train)
+
+    return mlp_calibrated, xgb_calibrated, lr_calibrated
+
+
+def save_tuning_results(
+    mlp_search,
+    xgb_search,
+    lr_search,
+    output_dir: Path,
+) -> None:
+    """Serializes best hyperparameters and cross-validation search dataframes."""
+    save_json(mlp_search.best_params_, output_dir / MLP_PARAMS_FILE)
+    save_json(xgb_search.best_params_, output_dir / XGB_PARAMS_FILE)
+    save_json(lr_search.best_params_, output_dir / LR_PARAMS_FILE)
+
+    pd.DataFrame(mlp_search.cv_results_).to_csv(
+        output_dir / MLP_RESULTS_FILE, index=False
+    )
+    pd.DataFrame(xgb_search.cv_results_).to_csv(
+        output_dir / XGB_RESULTS_FILE, index=False
+    )
+    pd.DataFrame(lr_search.cv_results_).to_csv(
+        output_dir / LR_RESULTS_FILE, index=False
+    )

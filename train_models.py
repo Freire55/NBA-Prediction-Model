@@ -113,6 +113,36 @@ def save_model_artifacts(artifacts: TrainingArtifacts):
         save_joblib(obj, artifacts.output_dir / filename)
 
 
+def generate_evaluation_plots(
+    y_test,
+    ensemble_probs,
+    ensemble_preds,
+    ensemble_metrics: dict,
+    config: TrainingConfig,
+    output_dir: Path,
+) -> None:
+    """Generates and saves ROC, calibration, and confusion matrix plots for the ensemble."""
+    plot_roc_curve(
+        y_test,
+        ensemble_probs,
+        ensemble_metrics["ROC_AUC"],
+        output_dir,
+    )
+    plot_calibration(
+        y_test,
+        ensemble_probs,
+        ensemble_metrics["Brier_Score"],
+        config.calibration_bins,
+        output_dir,
+    )
+    plot_confusion(
+        y_test,
+        ensemble_preds,
+        ensemble_metrics["Accuracy"],
+        output_dir,
+    )
+
+
 def print_completion_summary(logger, output_dir):
     """Logs the training completion summary."""
 
@@ -258,26 +288,12 @@ def main() -> None:
         save_metrics(metrics_dict, output_dir)
 
         ensemble_metrics = metrics_dict["Ensemble"]
-
-        plot_roc_curve(
+        generate_evaluation_plots(
             artifacts.data.y_test,
             ensemble_probs,
-            ensemble_metrics["ROC_AUC"],
-            output_dir,
-        )
-
-        plot_calibration(
-            artifacts.data.y_test,
-            ensemble_probs,
-            ensemble_metrics["Brier_Score"],
-            config.calibration_bins,
-            output_dir,
-        )
-
-        plot_confusion(
-            artifacts.data.y_test,
             ensemble_preds,
-            ensemble_metrics["Accuracy"],
+            ensemble_metrics,
+            config,
             output_dir,
         )
 

@@ -83,6 +83,27 @@ ml_ready_matchups_schema = DataFrameSchema(
         "REST_ADVANTAGE": Column(pa.Float, nullable=False),
         "DELTA_ELO": Column(pa.Float, nullable=False),
         "DELTA_ROLLING_OFF_RATING": Column(pa.Float, nullable=False),
+
+        # Four Factors bounds ([0, 1] for percentages)
+        "HOME_FOUR_FACTOR_EFG_ROLLING_8": Column(pa.Float, checks=[Check.greater_than_or_equal_to(0.0), Check.less_than_or_equal_to(1.0)], nullable=True, required=False),
+        "AWAY_FOUR_FACTOR_EFG_ROLLING_8": Column(pa.Float, checks=[Check.greater_than_or_equal_to(0.0), Check.less_than_or_equal_to(1.0)], nullable=True, required=False),
+        "HOME_FOUR_FACTOR_TOV_ROLLING_8": Column(pa.Float, checks=[Check.greater_than_or_equal_to(0.0), Check.less_than_or_equal_to(1.0)], nullable=True, required=False),
+        "AWAY_FOUR_FACTOR_TOV_ROLLING_8": Column(pa.Float, checks=[Check.greater_than_or_equal_to(0.0), Check.less_than_or_equal_to(1.0)], nullable=True, required=False),
+        "HOME_FOUR_FACTOR_OREB_ROLLING_8": Column(pa.Float, checks=[Check.greater_than_or_equal_to(0.0), Check.less_than_or_equal_to(1.0)], nullable=True, required=False),
+        "AWAY_FOUR_FACTOR_OREB_ROLLING_8": Column(pa.Float, checks=[Check.greater_than_or_equal_to(0.0), Check.less_than_or_equal_to(1.0)], nullable=True, required=False),
+        "HOME_FOUR_FACTOR_FTR_ROLLING_8": Column(pa.Float, checks=Check.greater_than_or_equal_to(0.0), nullable=True, required=False),
+        "AWAY_FOUR_FACTOR_FTR_ROLLING_8": Column(pa.Float, checks=Check.greater_than_or_equal_to(0.0), nullable=True, required=False),
+
+        # Altitude bounds
+        "HOME_ALTITUDE": Column(pa.Float, checks=Check.greater_than_or_equal_to(0.0), nullable=True, required=False),
+        "AWAY_ALTITUDE": Column(pa.Float, checks=Check.greater_than_or_equal_to(0.0), nullable=True, required=False),
+        "ALTITUDE_ADVANTAGE": Column(pa.Float, checks=Check.greater_than_or_equal_to(0.0), nullable=True, required=False),
+
+        # Spacing Gravity & Playmaker Concentration bounds
+        "HOME_SPACING_GRAVITY_INDEX": Column(pa.Float, checks=Check.greater_than_or_equal_to(0.0), nullable=True, required=False),
+        "AWAY_SPACING_GRAVITY_INDEX": Column(pa.Float, checks=Check.greater_than_or_equal_to(0.0), nullable=True, required=False),
+        "HOME_PLAYMAKER_CONCENTRATION_RATIO": Column(pa.Float, checks=[Check.greater_than_or_equal_to(0.0), Check.less_than_or_equal_to(1.0)], nullable=True, required=False),
+        "AWAY_PLAYMAKER_CONCENTRATION_RATIO": Column(pa.Float, checks=[Check.greater_than_or_equal_to(0.0), Check.less_than_or_equal_to(1.0)], nullable=True, required=False),
     },
     coerce=True,
     strict=False,

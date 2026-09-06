@@ -23,6 +23,10 @@ from feature_engineering import (
 from feature_engineering_players import (
     add_volatility_features,
     calculate_player_four_factors,
+    calculate_spacing_gravity,
+    calculate_playmaker_concentration,
+    calculate_obpm_proxy,
+    calculate_dbpm_proxy,
 )
 
 # ======================================================
@@ -424,3 +428,88 @@ def test_add_volatility_features_chronological_purity():
     assert np.isclose(result["PLAYER_GAME_SCORE_VOLATILITY"].iloc[0], 5.0)
     # No NaNs produced
     assert not result["ROBUST_EXPECTED_IMPACT"].isna().any()
+
+
+def test_spacing_gravity_calculation_properties():
+    """
+    Verifies 3-point spacing gravity index:
+    1. High 3PA volume and efficiency produces high spacing gravity.
+    2. Zero 3PA yields exactly 0.0 spacing gravity.
+    3. Monotonicity: higher minutes or higher 3P% increases gravity.
+    """
+    fg3a = pd.Series([10.0, 0.0, 5.0])
+    fg3m = pd.Series([4.0, 0.0, 2.0])  # 40% for shooter 0, 40% for shooter 2
+    mins = pd.Series([36.0, 30.0, 18.0])
+
+    gravity = calculate_spacing_gravity(fg3a, fg3m, mins)
+
+    # Shooter 0: 10 * (0.40 / 0.35) * (36 / 36) = 11.428...
+    expected_shooter_0 = 10.0 * (0.40 / 0.35) * (36.0 / 36.0)
+    assert np.isclose(gravity.iloc[0], expected_shooter_0)
+
+    # Non-shooter: 0.0
+    assert gravity.iloc[1] == 0.0
+
+    # Half-minutes, half-attempts shooter: strictly lower than shooter 0
+    assert 0.0 < gravity.iloc[2] < gravity.iloc[0]
+    assert (gravity >= 0.0).all()
+
+
+def test_playmaker_concentration_bounds_and_hierarchy():
+    """
+    Verifies playmaker concentration ratio:
+    1. Heliocentric offense (single star with all assists) has ratio = 1.0.
+    2. Decentralized offense (4 players with equal assists) has ratio = 0.25.
+    3. Handles 0 assists gracefully without division by zero.
+    4. Strict bounds [0.0, 1.0].
+    """
+    max_ast = pd.Series([10.0, 2.5, 0.0])
+    sum_ast = pd.Series([10.0, 10.0, 0.0])
+
+    conc = calculate_playmaker_concentration(max_ast, sum_ast)
+
+    # 1. Heliocentric star
+    assert conc.iloc[0] == 1.0
+
+    # 2. Balanced 4-player committee
+    assert np.isclose(conc.iloc[1], 0.25)
+
+    # 3. Zero assists fallback
+    assert conc.iloc[2] == 0.25
+
+    # 4. Strict bounds
+    assert ((conc >= 0.0) & (conc <= 1.0)).all()
+
+
+def test_bpm_proxy_calculation_and_directions():
+    """
+    Verifies 2-Way Box Plus-Minus (OBPM and DBPM) proxies:
+    1. High scoring, playmaking, offensive rebounding yield positive OBPM.
+    2. High steals, blocks, defensive rebounding yield positive DBPM.
+    3. Turnovers penalize OBPM; fouls penalize DBPM.
+    """
+    df = pd.DataFrame([
+        {
+            # Elite offensive creator
+            "PTS": 30.0, "AST": 10.0, "OREB": 2.0, "TOV": 2.0,
+            "FGA": 20.0, "FTA": 6.0, "STL": 1.0, "BLK": 0.0,
+            "DREB": 4.0, "PF": 2.0,
+        },
+        {
+            # Elite defensive anchor
+            "PTS": 6.0, "AST": 1.0, "OREB": 1.0, "TOV": 1.0,
+            "FGA": 5.0, "FTA": 2.0, "STL": 3.0, "BLK": 4.0,
+            "DREB": 12.0, "PF": 2.0,
+        },
+    ])
+
+    obpm = calculate_obpm_proxy(df)
+    dbpm = calculate_dbpm_proxy(df)
+
+    # Offensive creator has higher OBPM than defensive anchor
+    assert obpm.iloc[0] > obpm.iloc[1]
+    assert obpm.iloc[0] > 100.0
+
+    # Defensive anchor has higher DBPM than offensive creator
+    assert dbpm.iloc[1] > dbpm.iloc[0]
+    assert dbpm.iloc[1] > 100.0

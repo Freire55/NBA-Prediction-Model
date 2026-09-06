@@ -133,3 +133,84 @@ def test_feature_sets_exclude_postgame_leakage():
                 assert feat != forbidden, (
                     f"Target leakage in {model_name}: feature '{feat}' is forbidden!"
                 )
+
+
+def test_player_features_perturbation_invariance():
+    """
+    Verifies that mutating player post-game statistics in game T or future games T+1
+    leaves pre-game rolling stats (OBPM, DBPM, Spacing Gravity, Assists) for game T bitwise identical.
+    """
+    from feature_engineering_players import (
+        calculate_obpm_proxy,
+        calculate_dbpm_proxy,
+        calculate_player_four_factors,
+        calculate_spacing_gravity,
+    )
+
+    dates = pd.date_range("2023-01-01", periods=5, freq="2D")
+    rows = []
+    for i, date in enumerate(dates):
+        rows.append({
+            "PLAYER_ID": "P1",
+            "GAME_DATE": date,
+            "MIN": "36:00",
+            "PTS": 20.0 + i * 2,
+            "FGM": 8.0,
+            "FGA": 18.0,
+            "FG3M": 3.0,
+            "FG3A": 8.0,
+            "FTM": 1.0,
+            "FTA": 2.0,
+            "OREB": 1.0,
+            "DREB": 4.0,
+            "AST": 6.0,
+            "STL": 1.0,
+            "BLK": 0.0,
+            "TOV": 2.0,
+            "PF": 2.0,
+        })
+
+    df_orig = pd.DataFrame(rows)
+    df_pert = df_orig.copy()
+    # Mutate Game 3 post-game stats dramatically: score 100 points, 20 threes
+    df_pert.loc[3, "PTS"] = 100.0
+    df_pert.loc[3, "FG3M"] = 20.0
+    df_pert.loc[3, "FG3A"] = 25.0
+    df_pert.loc[3, "AST"] = 30.0
+
+    def compute_player_rolling(df):
+        d = df.copy()
+        d["MINUTES_NUM"] = 36.0
+        d["OBPM_PROXY"] = calculate_obpm_proxy(d)
+        d["DBPM_PROXY"] = calculate_dbpm_proxy(d)
+        ff = calculate_player_four_factors(d)
+        d["PLAYER_FOUR_FACTOR_EFG"] = ff["PLAYER_FOUR_FACTOR_EFG"]
+        
+        pg = d.groupby("PLAYER_ID")
+        d["PLAYER_OBPM_ROLLING_5"] = pg["OBPM_PROXY"].transform(rolling_mean, rolling_window=5).fillna(0.0)
+        d["PLAYER_FG3A_ROLLING_5"] = pg["FG3A"].transform(rolling_mean, rolling_window=5).fillna(0.0)
+        d["PLAYER_FG3M_ROLLING_5"] = pg["FG3M"].transform(rolling_mean, rolling_window=5).fillna(0.0)
+        d["PLAYER_AST_ROLLING_5"] = pg["AST"].transform(rolling_mean, rolling_window=5).fillna(0.0)
+        d["PLAYER_SPACING_GRAVITY"] = calculate_spacing_gravity(
+            d["PLAYER_FG3A_ROLLING_5"], d["PLAYER_FG3M_ROLLING_5"], pd.Series(36.0, index=d.index)
+        )
+        return d
+
+    res_orig = compute_player_rolling(df_orig)
+    res_pert = compute_player_rolling(df_pert)
+
+    # For Game 3 (index 3), pre-game features must be 100% bitwise invariant
+    check_cols = [
+        "PLAYER_OBPM_ROLLING_5",
+        "PLAYER_FG3A_ROLLING_5",
+        "PLAYER_FG3M_ROLLING_5",
+        "PLAYER_AST_ROLLING_5",
+        "PLAYER_SPACING_GRAVITY",
+    ]
+    for col in check_cols:
+        orig_val = res_orig.loc[3, col]
+        pert_val = res_pert.loc[3, col]
+        assert orig_val == pytest.approx(pert_val, abs=1e-9), (
+            f"Leakage in player feature {col}! Orig: {orig_val}, Pert: {pert_val}"
+        )
+

@@ -369,23 +369,29 @@ def simulate_elo(df: pd.DataFrame) -> pd.DataFrame:
 
 
 
-def build_matchups(df: pd.DataFrame) -> pd.DataFrame:
-    """Combines home and away rows into single matchup-level observations."""
+def merge_home_away_games(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Combines home and away team game rows into single matchup-level observations."""
     home_df = df[df['MATCHUP'].str.contains(' vs. ')].copy().add_prefix('HOME_')
     away_df = df[df['MATCHUP'].str.contains(' @ ')].copy().add_prefix('AWAY_')
     matchups_df = home_df.merge(away_df, left_on='HOME_GAME_ID', right_on='AWAY_GAME_ID')
-
     matchups_df['HOME_WIN'] = np.where(matchups_df['HOME_PTS'] > matchups_df['AWAY_PTS'], 1, 0)
+    matchups_df['SEASON_YEAR'] = matchups_df['HOME_SEASON_YEAR']
+    return matchups_df, home_df
 
-    # Establish relative advantages
+
+def add_schedule_and_elo_deltas(matchups_df: pd.DataFrame) -> pd.DataFrame:
+    """Computes differential fatigue, schedule density, and Elo ratings."""
     matchups_df['REST_ADVANTAGE'] = matchups_df['HOME_REST_DAYS'] - matchups_df['AWAY_REST_DAYS']
-    matchups_df['SEASON_YEAR'] = matchups_df['HOME_SEASON_YEAR'] 
     matchups_df['DELTA_ELO'] = matchups_df['HOME_PRE_GAME_ELO'] - matchups_df['AWAY_PRE_GAME_ELO']
     matchups_df['DELTA_ROAD_TRIP_LENGTH'] = matchups_df['HOME_ROAD_TRIP_LENGTH'] - matchups_df['AWAY_ROAD_TRIP_LENGTH']
     matchups_df['DELTA_3_IN_4'] = matchups_df['HOME_3_IN_4'] - matchups_df['AWAY_3_IN_4']
     matchups_df['DELTA_4_IN_5'] = matchups_df['HOME_4_IN_5'] - matchups_df['AWAY_4_IN_5']
-    matchups_df[f'DELTA_SOS_ROLLING_{ROLLING_WINDOW}'] = matchups_df[f'HOME_SOS_ROLLING_{ROLLING_WINDOW}'] - matchups_df[f'AWAY_SOS_ROLLING_{ROLLING_WINDOW}']
-    matchups_df['DELTA_ROLLING_OFF_RATING'] = matchups_df['HOME_ROLLING_OFF_RATING'] - matchups_df['AWAY_ROLLING_OFF_RATING']
+    matchups_df[f'DELTA_SOS_ROLLING_{ROLLING_WINDOW}'] = (
+        matchups_df[f'HOME_SOS_ROLLING_{ROLLING_WINDOW}'] - matchups_df[f'AWAY_SOS_ROLLING_{ROLLING_WINDOW}']
+    )
+    matchups_df['DELTA_ROLLING_OFF_RATING'] = (
+        matchups_df['HOME_ROLLING_OFF_RATING'] - matchups_df['AWAY_ROLLING_OFF_RATING']
+    )
     matchups_df[f'DELTA_ROLLING_PACE_{ROLLING_WINDOW}'] = (
         matchups_df[f'HOME_ROLLING_PACE_{ROLLING_WINDOW}']
         - matchups_df[f'AWAY_ROLLING_PACE_{ROLLING_WINDOW}']
@@ -401,8 +407,11 @@ def build_matchups(df: pd.DataFrame) -> pd.DataFrame:
             matchups_df[f'HOME_PACE_EWMA_{span}']
             - matchups_df[f'AWAY_PACE_EWMA_{span}']
         )
-    
-    # Altitude and Home Court Elevation Advantage
+    return matchups_df
+
+
+def add_altitude_matchup_features(matchups_df: pd.DataFrame) -> pd.DataFrame:
+    """Calculates home court altitude advantage and back-to-back penalty."""
     alt_map = load_altitude_map()
     if alt_map and 'HOME_TEAM_ABBREVIATION' in matchups_df.columns:
         matchups_df['HOME_ALTITUDE'] = matchups_df['HOME_TEAM_ABBREVIATION'].map(alt_map).fillna(0.0)
@@ -414,7 +423,11 @@ def build_matchups(df: pd.DataFrame) -> pd.DataFrame:
         matchups_df['ALTITUDE_B2B_PENALTY'] = (
             matchups_df['ALTITUDE_ADVANTAGE'] * matchups_df['AWAY_B2B']
         )
+    return matchups_df
 
+
+def add_four_factors_matchup_deltas(matchups_df: pd.DataFrame) -> pd.DataFrame:
+    """Computes differential Four Factors across rolling and EWMA spans."""
     four_factor_features = [
         'FOUR_FACTOR_EFG',
         'FOUR_FACTOR_TOV',
@@ -424,25 +437,23 @@ def build_matchups(df: pd.DataFrame) -> pd.DataFrame:
 
     for factor in four_factor_features:
         rolling_col = f'{factor}_ROLLING_{ROLLING_WINDOW}'
-
         matchups_df[f'DELTA_{factor}_ROLLING_{ROLLING_WINDOW}'] = (
-            matchups_df[f'HOME_{rolling_col}']
-            - matchups_df[f'AWAY_{rolling_col}']
+            matchups_df[f'HOME_{rolling_col}'] - matchups_df[f'AWAY_{rolling_col}']
         )
-
         for span in EWMA_SPANS:
             ewma_col = f'{factor}_EWMA_{span}'
-
             matchups_df[f'DELTA_{factor}_EWMA_{span}'] = (
-                matchups_df[f'HOME_{ewma_col}']
-                - matchups_df[f'AWAY_{ewma_col}']
+                matchups_df[f'HOME_{ewma_col}'] - matchups_df[f'AWAY_{ewma_col}']
             )
 
-    # Net shooting-efficiency matchup signal
     matchups_df['DELTA_FOUR_FACTORS_NET_EFG'] = (
         matchups_df['DELTA_FOUR_FACTOR_EFG_ROLLING_8']
     )
+    return matchups_df
 
+
+def add_zscore_matchup_deltas(matchups_df: pd.DataFrame, home_df: pd.DataFrame) -> pd.DataFrame:
+    """Computes differentials for era-adjusted Z-score statistics."""
     z_feature_cols = [
         col.replace("HOME_", "")
         for col in home_df.columns
@@ -452,40 +463,46 @@ def build_matchups(df: pd.DataFrame) -> pd.DataFrame:
             or "_EWMA_" in col
         )
     ]    
-    
     for col in z_feature_cols:
         delta_col = f"DELTA_{col}"
         matchups_df[delta_col] = matchups_df[f"HOME_{col}"] - matchups_df[f"AWAY_{col}"]
 
     matchups_df = matchups_df.dropna(subset=[f'DELTA_Z_PTS_ROLLING_{ROLLING_WINDOW}'])
+    return matchups_df
 
-    # ---------------------------------------------------------
-    # Drop Post-Game Box Score Stats
-    # ---------------------------------------------------------
+
+def drop_postgame_leakage_columns(matchups_df: pd.DataFrame) -> pd.DataFrame:
+    """Strips post-game box score statistics to prevent data leakage."""
     raw_box_score_stats = [
         'PTS', 'FGM', 'FGA', 'FG_PCT', 'FG3M', 'FG3A', 'FG3_PCT',
         'FTM', 'FTA', 'FT_PCT', 'OREB', 'DREB', 'REB', 'AST', 'STL',
         'BLK', 'TOV', 'PF', 'PLUS_MINUS', 'POSSESSIONS', 'PACE', 'MIN',
         'FOUR_FACTOR_EFG', 'FOUR_FACTOR_TOV', 'FOUR_FACTOR_OREB', 'FOUR_FACTOR_FTR',
     ]
-    
     cols_to_drop = []
     for stat in raw_box_score_stats:
         cols_to_drop.extend([
             f"HOME_{stat}", f"AWAY_{stat}", 
             f"HOME_Z_{stat}", f"AWAY_Z_{stat}"
         ])
-        
-    matchups_df = matchups_df.drop(
+    return matchups_df.drop(
         columns=[c for c in cols_to_drop if c in matchups_df.columns]
     )
 
+
+def build_matchups(df: pd.DataFrame) -> pd.DataFrame:
+    """Combines home and away rows into single matchup-level observations with engineered deltas."""
+    matchups_df, home_df = merge_home_away_games(df)
+    matchups_df = add_schedule_and_elo_deltas(matchups_df)
+    matchups_df = add_altitude_matchup_features(matchups_df)
+    matchups_df = add_four_factors_matchup_deltas(matchups_df)
+    matchups_df = add_zscore_matchup_deltas(matchups_df, home_df)
+    matchups_df = drop_postgame_leakage_columns(matchups_df)
     return matchups_df
 
-# ======================================================
-# Main Execution
-# ======================================================
-if __name__ == "__main__":
+
+def main() -> None:
+    """Executes the full feature engineering pipeline for team matchups."""
     logger.info("Loading and sorting era-adjusted data...")
     df = load_and_sort_data(DATA_DIR / "era_adjusted_nba.csv")
 
@@ -509,3 +526,10 @@ if __name__ == "__main__":
         f"Success! Generated {len(matchups_df):,} matchup observations "
         f"with {rolling_feature_count} rolling statistical features."
     )
+
+
+# ======================================================
+# Main Execution
+# ======================================================
+if __name__ == "__main__":
+    main()

@@ -353,18 +353,8 @@ class TrainingArtifacts:
     ensemble_weights: np.ndarray | None = None
 
 
-def get_experiment_metadata(data_dir: Path | None = None) -> dict[str, Any]:
-    """
-    Collects runtime information describing the current experiment.
-
-    This metadata is saved alongside every trained model to improve
-    reproducibility and simplify future comparisons between runs.
-    """
-    git_info: dict[str, Any] = {
-        "git_commit": "unknown",
-        "git_branch": "unknown",
-        "git_dirty": False,
-    }
+def get_git_metadata() -> dict[str, Any]:
+    """Retrieves current git commit, branch, and working tree status."""
     try:
         commit = subprocess.run(
             ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
@@ -377,30 +367,49 @@ def get_experiment_metadata(data_dir: Path | None = None) -> dict[str, Any]:
                 ["git", "status", "--porcelain"], capture_output=True, text=True, check=True
             ).stdout.strip()
         )
-        git_info = {
+        return {
             "git_commit": commit,
             "git_branch": branch,
             "git_dirty": dirty,
         }
     except Exception:
-        pass
+        return {
+            "git_commit": "unknown",
+            "git_branch": "unknown",
+            "git_dirty": False,
+        }
 
+
+def get_dataset_fingerprint(dataset_path: Path) -> str | None:
+    """Computes a SHA-256 fingerprint on the first 1MB of the dataset."""
+    if not dataset_path.exists():
+        return None
+    import hashlib
+    hasher = hashlib.sha256()
+    with open(dataset_path, "rb") as f:
+        hasher.update(f.read(1024 * 1024))
+    return hasher.hexdigest()
+
+
+def get_experiment_metadata(data_dir: Path | None = None) -> dict[str, Any]:
+    """
+    Collects runtime information describing the current experiment.
+
+    This metadata is saved alongside every trained model to improve
+    reproducibility and simplify future comparisons between runs.
+    """
     metadata: dict[str, Any] = {
         "run_timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "python_version": sys.version.split()[0],
         "platform": platform.platform(),
         "cpu_count": os.cpu_count() or 1,
         "dataset_version": "v2.0-heterogeneous",
-        **git_info,
+        **get_git_metadata(),
     }
 
     if data_dir is not None:
-        dataset_path = Path(data_dir) / "ml_ready_matchups_players.csv"
-        if dataset_path.exists():
-            import hashlib
-            hasher = hashlib.sha256()
-            with open(dataset_path, "rb") as f:
-                hasher.update(f.read(1024 * 1024))
-            metadata["dataset_fingerprint_sha256_1mb"] = hasher.hexdigest()
+        fingerprint = get_dataset_fingerprint(Path(data_dir) / "ml_ready_matchups_players.csv")
+        if fingerprint is not None:
+            metadata["dataset_fingerprint_sha256_1mb"] = fingerprint
 
     return metadata
