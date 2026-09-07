@@ -1,30 +1,124 @@
 """
-Learns the optimal ensemble weights for the prediction models.
+Learns optimal convex ensemble weights across NBA prediction models.
 
-This module combines the validation-set probability predictions from the
-calibrated MLP, XGBoost, and Logistic Regression models using Non-Negative
-Least Squares (NNLS).
+This module combines validation-set probability distributions from calibrated
+models (MLP, XGBoost, Logistic Regression, and optionally Pace-Modulated Margin)
+by minimizing logarithmic loss on the probability simplex:
+
+    minimize_{w} - 1/N sum_{i=1}^N [ y_i ln(p_i(w)) + (1 - y_i) ln(1 - p_i(w)) ]
+    subject to:
+        sum_{j=1}^M w_j = 1.0
+        w_j >= 0.0  for all j in {1, ..., M}
+
+Sequential Least Squares Programming (SLSQP) solves this constrained convex
+optimization, ensuring the ensemble output remains a valid probability distribution.
 """
 
 import logging
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
 from sklearn.metrics import log_loss
 
-from training.config import FeatureSet, ModelArtifacts
-
-# ======================================================
-# Logging
-# ======================================================
+from training.config import ModelArtifacts
 
 logger = logging.getLogger(__name__)
 
+# Numerical clipping threshold to avoid log(0) divergences in log-loss calculations
+LOG_LOSS_EPSILON = 1e-15
+
 
 # ======================================================
-# Ensemble Weight Learning
+# Probability Extraction
+# ======================================================
+
+def _extract_validation_probabilities(
+    mlp: ModelArtifacts,
+    xgb: ModelArtifacts,
+    lr: ModelArtifacts,
+    margin: Optional[ModelArtifacts] = None,
+) -> Tuple[np.ndarray, List[str]]:
+    """
+    Extracts positive-class validation probability forecasts from all available models.
+
+    Returns:
+        Tuple of (stacked_predictions_matrix of shape [N, M], list_of_model_names)
+    """
+    mlp_probs = mlp.model.predict_proba(mlp.feature_set.X_val_processed)[:, 1]
+    xgb_probs = xgb.model.predict_proba(xgb.feature_set.X_val)[:, 1]
+    lr_probs = lr.model.predict_proba(lr.feature_set.X_val_processed)[:, 1]
+
+    columns = [mlp_probs, xgb_probs, lr_probs]
+    names = ["MLP", "XGBoost", "Logistic Regression"]
+
+    if margin is not None and margin.model is not None:
+        reg_type = getattr(getattr(margin.model, "regressor", margin.model), "model_type", "ridge")
+        X_val = (
+            margin.feature_set.X_val_processed
+            if reg_type == "ridge"
+            else margin.feature_set.X_val
+        )
+        margin_probs = margin.model.predict_proba(X_val)[:, 1]
+        columns.append(margin_probs)
+        names.append("Margin CDF")
+
+    return np.column_stack(columns), names
+
+
+# ======================================================
+# Optimization Engine
+# ======================================================
+
+def _optimize_weights_slsqp(
+    predictions_matrix: np.ndarray,
+    y_true: pd.Series,
+) -> np.ndarray:
+    """
+    Solves the constrained convex optimization problem over the probability simplex.
+
+    Args:
+        predictions_matrix: Array of shape (n_samples, n_models) containing probabilities.
+        y_true: Ground truth binary target vector.
+
+    Returns:
+        Optimal weight vector w of shape (n_models,) summing to 1.0 with w_j >= 0.
+    """
+    n_models = predictions_matrix.shape[1]
+
+    def _cross_entropy_objective(weights: np.ndarray) -> float:
+        blended = np.dot(predictions_matrix, weights)
+        blended_safe = np.clip(blended, LOG_LOSS_EPSILON, 1.0 - LOG_LOSS_EPSILON)
+        return float(log_loss(y_true, blended_safe))
+
+    constraints = {"type": "eq", "fun": lambda w: np.sum(w) - 1.0}
+    bounds = [(0.0, 1.0) for _ in range(n_models)]
+    initial_weights = np.full(n_models, 1.0 / n_models)
+
+    result = minimize(
+        _cross_entropy_objective,
+        initial_weights,
+        method="SLSQP",
+        bounds=bounds,
+        constraints=constraints,
+        options={"ftol": 1e-9, "maxiter": 1000},
+    )
+
+    if not result.success:
+        logger.warning(
+            "      Ensemble optimization failed to converge (%s). Falling back to equal weights.",
+            result.message,
+        )
+        return initial_weights
+
+    # Ensure strictly normalized weights (guard against numerical precision fuzz)
+    normalized = np.maximum(result.x, 0.0)
+    return normalized / np.sum(normalized)
+
+
+# ======================================================
+# Main Pipeline API
 # ======================================================
 
 def learn_ensemble_weights(
@@ -32,107 +126,31 @@ def learn_ensemble_weights(
     xgb: ModelArtifacts,
     lr: ModelArtifacts,
     y_val: pd.Series,
+    margin: Optional[ModelArtifacts] = None,
 ) -> Tuple[np.ndarray, Dict[str, float]]:
     """
-    Learns non-negative ensemble weights using validation predictions.
+    Learns non-negative ensemble blending weights using validation set predictions.
 
-    Assumes base models are calibrated (e.g., via CalibratedClassifierCV) 
-    to ensure reliable probability estimation for the blending weights.
+    Args:
+        mlp: Trained MLP model artifact.
+        xgb: Trained XGBoost model artifact.
+        lr: Trained Logistic Regression model artifact.
+        y_val: Ground truth validation labels.
+        margin: Optional trained Pace-Modulated Margin model artifact.
 
-    Parameters
-    ----------
-    mlp_model : Any
-        Calibrated MLP classifier.
-    xgb_model : Any
-        Calibrated XGBoost classifier.
-    lr_model : Any
-        Calibrated Logistic Regression classifier.
-    mlp_data : FeatureSet
-        Feature set used by the MLP.
-    xgb_data : FeatureSet
-        Feature set used by XGBoost.
-    lr_data : FeatureSet
-        Feature set used by Logistic Regression.
-    y_val : pd.Series
-        Validation labels.
-
-    Returns
-    -------
-    tuple
-        A tuple containing:
-        - normalized ensemble weights
-        - dictionary describing the learned ensemble formula
+    Returns:
+        Tuple containing:
+            - Normalized weight vector
+            - Dictionary mapping model names to learned blending weights
     """
     logger.info("      Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...")
 
-    # Generate validation probabilities from calibrated models
-    mlp_probs = mlp.model.predict_proba(
-        mlp.feature_set.X_val_processed
-    )[:, 1]
+    predictions_matrix, model_names = _extract_validation_probabilities(mlp, xgb, lr, margin)
+    weights = _optimize_weights_slsqp(predictions_matrix, y_val)
 
-    xgb_probs = xgb.model.predict_proba(
-        xgb.feature_set.X_val
-    )[:, 1]
+    formula = {name: float(w) for name, w in zip(model_names, weights)}
 
-    lr_probs = lr.model.predict_proba(
-        lr.feature_set.X_val_processed
-    )[:, 1]
+    formula_str = " + ".join([f"({w:.3f} * {name})" for name, w in formula.items()])
+    logger.info("      Learned Formula: %s", formula_str)
 
-    # Stack predictions for optimization
-    stacked_predictions = np.column_stack(
-        (mlp_probs, xgb_probs, lr_probs)
-    )
-
-    # Define the Log Loss objective function
-    def objective(weights: np.ndarray) -> float:
-        blended_probs = np.dot(stacked_predictions, weights)
-        # Clip to prevent log(0) explosion
-        blended_probs = np.clip(blended_probs, 1e-15, 1 - 1e-15)
-        return log_loss(y_val, blended_probs)
-
-    # Constraint: Weights must sum to 1.0
-    constraints = {"type": "eq", "fun": lambda w: np.sum(w) - 1.0}
-    
-    # Bounds: Weights must be between 0.0 and 1.0
-    bounds = [(0.0, 1.0), (0.0, 1.0), (0.0, 1.0)]
-    
-    # Initial guess: Equal weighting
-    initial_guess = [1 / 3, 1 / 3, 1 / 3]
-
-    # Run the Sequential Least Squares Programming optimizer
-    result = minimize(
-        objective, 
-        initial_guess, 
-        method="SLSQP", 
-        bounds=bounds, 
-        constraints=constraints,
-        options={
-            "ftol": 1e-9,
-            "maxiter": 1000,
-        },
-    )
-
-    if not result.success:
-        logger.warning(
-            "      Ensemble optimization failed (%s). Using equal weights.",
-            result.message,
-        )
-        normalized_weights = np.full(3, 1 / 3)
-    else:
-        normalized_weights = result.x
-    
-    ensemble_formula = {
-        "MLP": float(normalized_weights[0]),
-        "XGBoost": float(normalized_weights[1]),
-        "Logistic Regression": float(normalized_weights[2]),
-    }
-
-    logger.info(
-        "      Learned Formula: "
-        "(%.3f * MLP) + (%.3f * XGB) + (%.3f * LR)",
-        ensemble_formula["MLP"],
-        ensemble_formula["XGBoost"],
-        ensemble_formula["Logistic Regression"],
-    )
-
-    return normalized_weights, ensemble_formula
+    return weights, formula

@@ -1,19 +1,24 @@
 """
-Generates feature importance and model explainability artifacts.
+Feature importance and model interpretability generation for NBA models.
 
-This module computes feature importance for each trained model,
-generates SHAP explanations for the XGBoost model, and exports
-combined feature rankings together with visualization plots.
+This module extracts architecture-specific feature importances and global SHAP
+values to explain the predictive drivers behind model forecasts:
+- MLP: Permutation feature importance across chronological validation games
+- XGBoost: MDI (Mean Decrease in Impurity) tree importance and SHAP TreeExplainer
+- Logistic Regression: L2-regularized standardized regression coefficients
+- Margin Regressor: Point differential regression weights (Ridge/XGB)
 
 Outputs:
     05_xgb_feature_importance.png
     06_mlp_feature_importance.png
     07_lr_coefficients.png
     08_xgb_shap_summary.png
+    09_margin_coefficients.png (if margin model present)
     combined_feature_rankings.csv
 """
 
 import logging
+from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -22,49 +27,50 @@ import shap
 from sklearn.inspection import permutation_importance
 
 from training.config import TrainingArtifacts
+from training.margin import MarginRegressor, PaceModulatedMarginClassifier
 from training.plots import plot_horizontal_bar
 from training.utils import save_plot, unwrap_base_estimator
 
 # ======================================================
-# Constants
+# Output Filenames
 # ======================================================
 
 XGB_IMPORTANCE_PLOT = "05_xgb_feature_importance.png"
 MLP_IMPORTANCE_PLOT = "06_mlp_feature_importance.png"
 LR_COEFFICIENTS_PLOT = "07_lr_coefficients.png"
 SHAP_PLOT = "08_xgb_shap_summary.png"
+MARGIN_IMPORTANCE_PLOT = "09_margin_coefficients.png"
 
 COMBINED_RANKINGS_FILE = "combined_feature_rankings.csv"
-
-# ======================================================
-# Logging
-# ======================================================
 
 logger = logging.getLogger(__name__)
 
 
 # ======================================================
-# Explainability Functions
+# Individual Model Interpretability
 # ======================================================
 
 def generate_mlp_importance(
     artifacts: TrainingArtifacts,
 ) -> pd.DataFrame:
     """
-    Computes permutation feature importance for the trained MLP model.
+    Evaluates permutation importance for the Multi-Layer Perceptron.
+
+    Shuffles one feature column at a time on validation data and records the
+    resulting deterioration in predictive log-loss or accuracy.
     """
     logger.info("      Evaluating MLP Permutation Importance...")
 
     X_val = artifacts.mlp.feature_set.X_val_processed
     y_val = artifacts.data.y_val
 
-    # Replace NaNs/Infs with 0 if they exist
-    X_val = pd.DataFrame(X_val).fillna(0).replace([np.inf, -np.inf], 0).values
+    # Replace potential NaNs/Infs with 0 to safeguard permutation scorer
+    X_val_clean = pd.DataFrame(X_val).fillna(0).replace([np.inf, -np.inf], 0).values
 
     permutation = permutation_importance(
         artifacts.mlp.final_model,
-        artifacts.mlp.feature_set.X_val_processed,
-        artifacts.data.y_val,
+        X_val_clean,
+        y_val,
         n_repeats=artifacts.config.permutation_repeats,
         random_state=artifacts.config.random_seed,
         n_jobs=-1,
@@ -94,14 +100,10 @@ def generate_mlp_importance(
 def generate_xgb_importance(
     artifacts: TrainingArtifacts,
 ) -> pd.DataFrame:
-    """
-    Extracts the built-in feature importance values from XGBoost.
-    """
+    """Extracts native Gini gain / tree split importance from XGBoost."""
     logger.info("      Extracting XGBoost Tree Importance...")
 
-    xgb_raw = unwrap_base_estimator(
-        artifacts.xgb.final_model
-    )
+    xgb_raw = unwrap_base_estimator(artifacts.xgb.final_model)
 
     importance_df = (
         pd.DataFrame(
@@ -127,15 +129,10 @@ def generate_xgb_importance(
 def generate_lr_coefficients(
     artifacts: TrainingArtifacts,
 ) -> pd.DataFrame:
-    """
-    Extracts and ranks Logistic Regression coefficients by absolute value.
-    """
+    """Ranks Logistic Regression coefficients by absolute magnitude."""
     logger.info("      Extracting Logistic Regression Coefficients...")
 
-    # Unwrap the base estimator because it is now calibrated
-    lr_raw = unwrap_base_estimator(
-        artifacts.lr.final_model
-    )
+    lr_raw = unwrap_base_estimator(artifacts.lr.final_model)
 
     coefficients_df = pd.DataFrame(
         {
@@ -143,15 +140,8 @@ def generate_lr_coefficients(
             "Weight": lr_raw.coef_[0],
         }
     )
-
-    coefficients_df["Abs_Weight"] = (
-        coefficients_df["Weight"].abs()
-    )
-
-    coefficients_df = coefficients_df.sort_values(
-        "Abs_Weight",
-        ascending=False,
-    )
+    coefficients_df["Abs_Weight"] = coefficients_df["Weight"].abs()
+    coefficients_df = coefficients_df.sort_values("Abs_Weight", ascending=False)
 
     plot_horizontal_bar(
         coefficients_df,
@@ -165,12 +155,67 @@ def generate_lr_coefficients(
     return coefficients_df
 
 
+def generate_margin_importance(
+    artifacts: TrainingArtifacts,
+) -> Optional[pd.DataFrame]:
+    """Extracts weights or feature importances from the continuous Margin Regressor."""
+    if artifacts.margin.final_model is None or artifacts.margin.feature_set is None:
+        return None
+
+    logger.info("      Extracting Margin Regressor Coefficients...")
+    model = artifacts.margin.final_model
+    reg = model.regressor if isinstance(model, PaceModulatedMarginClassifier) else model
+
+    if not isinstance(reg, MarginRegressor):
+        return None
+
+    if reg.model_type == "ridge":
+        ridge_est = reg.estimator_
+        weights = ridge_est.coef_
+        df = pd.DataFrame(
+            {
+                "Feature": reg.feature_names_ or artifacts.margin.feature_set.feature_names,
+                "Weight": weights,
+                "Abs_Weight": np.abs(weights),
+            }
+        ).sort_values("Abs_Weight", ascending=False)
+
+        plot_horizontal_bar(
+            df,
+            "Margin Ridge Regression Coefficients (Top 15)",
+            MARGIN_IMPORTANCE_PLOT,
+            sort_col="Abs_Weight",
+            xlabel="Absolute Coefficient (PTS Differential)",
+            output_dir=artifacts.output_dir,
+        )
+        return df
+
+    elif reg.model_type == "xgb":
+        xgb_est = reg.estimator_
+        df = pd.DataFrame(
+            {
+                "Feature": reg.feature_names_ or artifacts.margin.feature_set.feature_names,
+                "Importance": xgb_est.feature_importances_,
+            }
+        ).sort_values("Importance", ascending=False)
+
+        plot_horizontal_bar(
+            df,
+            "Margin XGBoost Importance (Top 15)",
+            MARGIN_IMPORTANCE_PLOT,
+            sort_col="Importance",
+            xlabel="Gain Importance",
+            output_dir=artifacts.output_dir,
+        )
+        return df
+
+    return None
+
+
 def generate_shap(
     artifacts: TrainingArtifacts,
 ) -> None:
-    """
-    Generates a global SHAP summary plot for the XGBoost model.
-    """
+    """Generates a global SHAP beeswarm summary plot for the XGBoost classifier."""
     logger.info("      Generating SHAP explanations for XGBoost...")
 
     sample_size = min(
@@ -187,19 +232,9 @@ def generate_shap(
     shap_values = explainer.shap_values(X_explain, check_additivity=False)
 
     plt.figure(figsize=(10, 8))
-
-    shap.summary_plot(
-        shap_values,
-        X_explain,
-        show=False,
-    )
-
+    shap.summary_plot(shap_values, X_explain, show=False)
     plt.title("Global SHAP Summary\n(XGBoost)")
-
-    save_plot(
-        artifacts.output_dir,
-        SHAP_PLOT,
-    )
+    save_plot(artifacts.output_dir, SHAP_PLOT)
 
 
 # ======================================================
@@ -210,36 +245,38 @@ def generate_explanations(
     artifacts: TrainingArtifacts,
 ) -> None:
     """
-    Generates all explainability artifacts, including feature
-    importance rankings, SHAP explanations, and combined rankings.
+    Generates all explainability artifacts across architectures and exports
+    a consolidated multi-model feature ranking CSV.
     """
     mlp_importance = generate_mlp_importance(artifacts)
     xgb_importance = generate_xgb_importance(artifacts)
     lr_coefficients = generate_lr_coefficients(artifacts)
+    margin_importance = generate_margin_importance(artifacts)
 
     combined = (
-        mlp_importance[
-            ["Feature", "Importance"]
-        ].rename(columns={"Importance": "MLP"})
+        mlp_importance[["Feature", "Importance"]]
+        .rename(columns={"Importance": "MLP"})
         .merge(
-            xgb_importance[
-                ["Feature", "Importance"]
-            ].rename(columns={"Importance": "XGBoost"}),
+            xgb_importance[["Feature", "Importance"]].rename(columns={"Importance": "XGBoost"}),
             on="Feature",
             how="outer",
         )
         .merge(
-            lr_coefficients[
-                ["Feature", "Abs_Weight"]
-            ].rename(
-                columns={
-                    "Abs_Weight": "Logistic_Regression"
-                }
+            lr_coefficients[["Feature", "Abs_Weight"]].rename(
+                columns={"Abs_Weight": "Logistic_Regression"}
             ),
             on="Feature",
             how="outer",
         )
     )
+
+    if margin_importance is not None:
+        val_col = "Abs_Weight" if "Abs_Weight" in margin_importance.columns else "Importance"
+        combined = combined.merge(
+            margin_importance[["Feature", val_col]].rename(columns={val_col: "Margin"}),
+            on="Feature",
+            how="outer",
+        )
 
     combined.to_csv(
         artifacts.output_dir / COMBINED_RANKINGS_FILE,

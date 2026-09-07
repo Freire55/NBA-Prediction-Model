@@ -1,0 +1,9 @@
+{
+    "Log_Loss": 0.6259,
+    "Accuracy": 0.6419,
+    "ROC_AUC": 0.7038,
+    "Brier_Score": 0.2183,
+    "Calibrated_Sigma": 11.5105,
+    "Baseline_Sigma": 11.8321,
+    "Margin_RMSE": 13.5269
+}

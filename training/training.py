@@ -1,14 +1,11 @@
 """
-Model retraining utilities for the NBA prediction pipeline.
+Retrains tuned NBA prediction models on the combined train and validation sets.
 
-This module retrains the best-performing models using the combined
-training and validation datasets after hyperparameter tuning has
-completed. It also fits the final feature scaler, exports scaler
-statistics for reproducibility, and returns the trained models
-ready for evaluation on the held-out test set.
-
-Functions:
-    retrain_on_full_data()
+After hyperparameter search spaces and ensemble weights are resolved, this module
+retrains estimators on the complete historical window (train + val) to maximize
+statistical efficiency before prospective testing. Feature scalers are refit on
+the combined historical dataset, and their parameters (means, scales) are exported
+to disk for auditability and production inference.
 """
 
 from pathlib import Path
@@ -18,129 +15,172 @@ import numpy as np
 import pandas as pd
 from sklearn.base import clone
 from sklearn.preprocessing import StandardScaler
+
 from training.config import FeatureSet, TrainingArtifacts
+from training.margin import MarginRegressor, PaceModulatedMarginClassifier
 
 # ======================================================
-# Output Files
+# Output Artifact Filenames
 # ======================================================
 
 SCALER_STATS_FILE = "scaler_statistics.csv"
 
 
 # ======================================================
-# Training Functions
+# Transformation & Scaling Helpers
 # ======================================================
 
-def retrain_on_full_data(
-    artifacts: TrainingArtifacts,
+def _combine_splits(
+    train_part: pd.DataFrame | pd.Series,
+    val_part: pd.DataFrame | pd.Series,
+) -> pd.DataFrame | pd.Series:
+    """Concatenates chronological training and validation partitions."""
+    return pd.concat([train_part, val_part], axis=0)
+
+
+def _fit_and_apply_scaler(
+    train_full: pd.DataFrame,
+    test: pd.DataFrame,
+) -> Tuple[StandardScaler, np.ndarray, np.ndarray]:
+    """
+    Fits a new StandardScaler on the combined historical dataset and scales
+    both full training and held-out test matrices.
+    """
+    scaler = StandardScaler()
+    train_full_scaled = scaler.fit_transform(train_full)
+    test_scaled = scaler.transform(test)
+    return scaler, train_full_scaled, test_scaled
+
+
+def _export_scaler_statistics(
+    scaler: StandardScaler,
+    features: pd.Index | list[str],
+    output_path: Path,
 ) -> None:
-    """
-    Retrains the selected models on the full historical dataset.
-
-    The training and validation datasets are combined before fitting
-    the final models. A new feature scaler is trained on the complete
-    dataset to avoid wasting available information, and scaler
-    statistics are exported for reproducibility.
-
-    This function mutates `artifacts` in place: it populates
-    `final_model` on each of `artifacts.mlp`, `artifacts.xgb`, and
-    `artifacts.lr`, and refreshes each model's `feature_set` with the
-    scaler and combined train+val data fit on the full dataset, so
-    that downstream stages (explainability, evaluation) see final,
-    fully-trained models rather than the dataclass defaults.
-
-    Args:
-        artifacts:
-            The central pipeline state, including tuned (but not yet
-            finally-retrained) models under `.model` for each of
-            `mlp`, `xgb`, and `lr`.
-    """
-    # --------------------------------------------------
-    # Combine training and validation datasets
-    # --------------------------------------------------
-
-    data = artifacts.data
-
-    mlp_train_full = pd.concat([
-        data.mlp.X_train,
-        data.mlp.X_val,
-    ])
-
-    xgb_train_full = pd.concat([
-        data.xgb.X_train,
-        data.xgb.X_val,
-    ])
-
-    lr_train_full = pd.concat([
-        data.lr.X_train,
-        data.lr.X_val,
-    ])
-
-    y_train_full = pd.concat([
-        data.y_train,
-        data.y_val,
-    ])
-
-
-    # --------------------------------------------------
-    # Fit scalers on the complete datasets
-    # --------------------------------------------------
-
-    mlp_scaler = StandardScaler()
-    mlp_train_full_scaled = mlp_scaler.fit_transform(mlp_train_full)
-    mlp_test_scaled = mlp_scaler.transform(data.mlp.X_test)
-
-    lr_scaler = StandardScaler()
-    lr_train_full_scaled = lr_scaler.fit_transform(lr_train_full)
-    lr_test_scaled = lr_scaler.transform(data.lr.X_test)
-
-    # --------------------------------------------------
-    # Export scaler statistics
-    # --------------------------------------------------
-
-    scaler_stats = pd.DataFrame(
+    """Exports scaler means and standard deviations for reproducibility."""
+    stats_df = pd.DataFrame(
         {
-            "Feature": lr_train_full.columns,
-            "Mean": lr_scaler.mean_,
-            "Std": lr_scaler.scale_,
+            "Feature": list(features),
+            "Mean": scaler.mean_,
+            "Std": scaler.scale_,
         }
     )
+    stats_df.to_csv(output_path, index=False)
 
-    scaler_stats.to_csv(
-        artifacts.output_dir / SCALER_STATS_FILE,
-        index=False,
+
+# ======================================================
+# Estimator Retraining
+# ======================================================
+
+def _retrain_classifier(
+    estimator: Any,
+    X_train: Any,
+    y_train: Any,
+) -> Any:
+    """Clones a tuned estimator configuration and refits it on full historical data."""
+    final_estimator = clone(estimator)
+    final_estimator.fit(X_train, y_train)
+    return final_estimator
+
+
+def _retrain_margin_pipeline(artifacts: TrainingArtifacts) -> None:
+    """
+    Retrains the continuous margin model and pace converter on full historical data.
+
+    Handles both raw MarginRegressor instances and PaceModulatedMarginClassifier wrappers.
+    """
+    if (
+        artifacts.margin.model is None
+        or artifacts.data is None
+        or artifacts.data.margin is None
+        or artifacts.data.y_margin_train is None
+    ):
+        return
+
+    margin_fs = artifacts.data.margin
+    margin_train_full = _combine_splits(margin_fs.X_train, margin_fs.X_val)
+    y_margin_full = _combine_splits(artifacts.data.y_margin_train, artifacts.data.y_margin_val)
+
+    scaler, train_scaled, test_scaled = _fit_and_apply_scaler(margin_train_full, margin_fs.X_test)
+    margin_fs.scaler = scaler
+    margin_fs.X_train_full = margin_train_full
+    margin_fs.X_train_full_processed = train_scaled
+    margin_fs.X_test_processed = test_scaled
+
+    model = artifacts.margin.model
+    if isinstance(model, PaceModulatedMarginClassifier):
+        reg = model.regressor
+        if reg.model_type == "ridge":
+            reg.fit(train_scaled, y_margin_full, feature_names=margin_fs.feature_names)
+        else:
+            reg.fit(margin_train_full, y_margin_full)
+        artifacts.margin.final_model = model
+    elif isinstance(model, MarginRegressor):
+        margin_final = clone(model)
+        if model.model_type == "ridge":
+            margin_final.fit(train_scaled, y_margin_full, feature_names=margin_fs.feature_names)
+        else:
+            margin_final.fit(margin_train_full, y_margin_full)
+        artifacts.margin.final_model = margin_final
+    else:
+        # Generic fallback
+        margin_final = clone(model)
+        margin_final.fit(train_scaled, y_margin_full)
+        artifacts.margin.final_model = margin_final
+
+
+# ======================================================
+# Main Pipeline API
+# ======================================================
+
+def retrain_on_full_data(artifacts: TrainingArtifacts) -> None:
+    """
+    Retrains all selected models on the combined training and validation dataset.
+
+    Mutates `artifacts` in-place by setting `final_model` and updated `feature_set`
+    containers with fresh scalers and scaled test data.
+    """
+    data = artifacts.data
+    mlp_train_full = _combine_splits(data.mlp.X_train, data.mlp.X_val)
+    xgb_train_full = _combine_splits(data.xgb.X_train, data.xgb.X_val)
+    lr_train_full = _combine_splits(data.lr.X_train, data.lr.X_val)
+    y_train_full = _combine_splits(data.y_train, data.y_val)
+
+    # Fit and apply scalers
+    mlp_scaler, mlp_train_scaled, mlp_test_scaled = _fit_and_apply_scaler(
+        mlp_train_full, data.mlp.X_test
+    )
+    lr_scaler, lr_train_scaled, lr_test_scaled = _fit_and_apply_scaler(
+        lr_train_full, data.lr.X_test
     )
 
-    # --------------------------------------------------
-    # Clone tuned models and retrain
-    # --------------------------------------------------
+    _export_scaler_statistics(
+        lr_scaler, lr_train_full.columns, artifacts.output_dir / SCALER_STATS_FILE
+    )
 
-    mlp_final = clone(artifacts.mlp.model)
-    xgb_final = clone(artifacts.xgb.model)
-    lr_final = clone(artifacts.lr.model)
+    # Retrain binary base classifiers
+    artifacts.mlp.final_model = _retrain_classifier(
+        artifacts.mlp.model, mlp_train_scaled, y_train_full
+    )
+    artifacts.xgb.final_model = _retrain_classifier(
+        artifacts.xgb.model, xgb_train_full, y_train_full
+    )
+    artifacts.lr.final_model = _retrain_classifier(
+        artifacts.lr.model, lr_train_scaled, y_train_full
+    )
 
-    mlp_final.fit(mlp_train_full_scaled, y_train_full)
-    xgb_final.fit(xgb_train_full, y_train_full)
-    lr_final.fit(lr_train_full_scaled, y_train_full)
-
-    # --------------------------------------------------
-    # Write results back onto artifacts
-    # --------------------------------------------------
-
-    artifacts.mlp.final_model = mlp_final
-    artifacts.xgb.final_model = xgb_final
-    artifacts.lr.final_model = lr_final
-
+    # Update feature set state
     artifacts.mlp.feature_set.scaler = mlp_scaler
-    artifacts.lr.feature_set.scaler = lr_scaler
-
-    artifacts.mlp.feature_set.X_test_processed = mlp_test_scaled
-    artifacts.lr.feature_set.X_test_processed = lr_test_scaled
-
     artifacts.mlp.feature_set.X_train_full = mlp_train_full
-    artifacts.mlp.feature_set.X_train_full_processed = mlp_train_full_scaled
+    artifacts.mlp.feature_set.X_train_full_processed = mlp_train_scaled
+    artifacts.mlp.feature_set.X_test_processed = mlp_test_scaled
 
     artifacts.xgb.feature_set.X_train_full = xgb_train_full
 
+    artifacts.lr.feature_set.scaler = lr_scaler
     artifacts.lr.feature_set.X_train_full = lr_train_full
-    artifacts.lr.feature_set.X_train_full_processed = lr_train_full_scaled
+    artifacts.lr.feature_set.X_train_full_processed = lr_train_scaled
+    artifacts.lr.feature_set.X_test_processed = lr_test_scaled
+
+    # Retrain margin regressor and pace converter if present
+    _retrain_margin_pipeline(artifacts)

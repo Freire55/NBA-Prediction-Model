@@ -236,3 +236,50 @@ def plot_confusion(
     )
 
     save_plot(output_dir, "04_confusion_matrix.png")
+
+
+def plot_margin_residual_distribution(
+    y_true: pd.Series | np.ndarray,
+    y_pred: np.ndarray,
+    output_dir: Path,
+    filename: str = "10_margin_residuals.png",
+) -> None:
+    """
+    Visualizes point differential residuals against theoretical Gaussian curve.
+
+    Validates Step 8's normality assumption:
+        Delta PTS ~ Normal(M_hat, sigma^2)
+    """
+    from scipy.stats import norm
+
+    residuals = np.asarray(y_true, dtype=np.float64) - np.asarray(y_pred, dtype=np.float64)
+    mean_val = float(np.mean(residuals))
+    std_val = float(np.std(residuals))
+
+    plt.figure(figsize=STANDARD_FIGSIZE)
+    count, bins, _ = plt.hist(
+        residuals,
+        bins=35,
+        density=True,
+        alpha=0.6,
+        color=DEFAULT_BAR_COLOR,
+        edgecolor="black",
+        label=f"Empirical Residuals (N={len(residuals)})",
+    )
+
+    x_axis = np.linspace(bins[0], bins[-1], 200)
+    plt.plot(
+        x_axis,
+        norm.pdf(x_axis, mean_val, std_val),
+        color="crimson",
+        linewidth=2,
+        label=f"Gaussian Fit (mu={mean_val:.2f}, sigma={std_val:.2f})",
+    )
+
+    plt.axvline(0, color="gray", linestyle="--", alpha=0.7)
+    plt.title(f"Margin Prediction Residuals Distribution\nBias: {mean_val:+.2f} pts | Std: {std_val:.2f} pts")
+    plt.xlabel("Residual Error (Actual Margin - Predicted Margin)")
+    plt.ylabel("Probability Density")
+    plt.legend()
+
+    save_plot(output_dir, filename)

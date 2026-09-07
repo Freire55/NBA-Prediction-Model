@@ -104,6 +104,9 @@ ml_ready_matchups_schema = DataFrameSchema(
         "AWAY_SPACING_GRAVITY_INDEX": Column(pa.Float, checks=Check.greater_than_or_equal_to(0.0), nullable=True, required=False),
         "HOME_PLAYMAKER_CONCENTRATION_RATIO": Column(pa.Float, checks=[Check.greater_than_or_equal_to(0.0), Check.less_than_or_equal_to(1.0)], nullable=True, required=False),
         "AWAY_PLAYMAKER_CONCENTRATION_RATIO": Column(pa.Float, checks=[Check.greater_than_or_equal_to(0.0), Check.less_than_or_equal_to(1.0)], nullable=True, required=False),
+
+        # Target variables
+        "TARGET_MARGIN": Column(pa.Float, nullable=True, required=False),
     },
     coerce=True,
     strict=False,
@@ -114,13 +117,39 @@ ml_ready_matchups_schema = DataFrameSchema(
 # Validation Helper Functions
 # ======================================================
 
-def validate_dataframe(df: pd.DataFrame, schema: DataFrameSchema, name: str = "Dataset") -> pd.DataFrame:
-    """Validates a DataFrame against a Pandera schema and raises descriptive errors."""
+def validate_dataframe(
+    df: pd.DataFrame,
+    schema: DataFrameSchema,
+    name: str = "Dataset",
+) -> pd.DataFrame:
+    """
+    Validates a DataFrame against a Pandera schema contract with lazy error reporting.
+
+    Raises:
+        ValueError: Detailed breakdown of the first 10 schema violations if validation fails.
+    """
     try:
         return schema.validate(df, lazy=True)
     except pa.errors.SchemaErrors as err:
         failure_cases = err.failure_cases
         raise ValueError(
-            f"Schema validation failed for {name} with {len(failure_cases)} violations:\n"
+            f"Schema validation failed: contract breach for {name} ({len(failure_cases)} violations detected):\n"
             f"{failure_cases.head(10)}"
         ) from err
+
+
+def check_schema_summary(
+    df: pd.DataFrame,
+    schema: DataFrameSchema,
+) -> tuple[bool, int, Optional[pd.DataFrame]]:
+    """
+    Non-raising diagnostic helper returning validation success, violation count, and top violations.
+
+    Returns:
+        tuple: (is_valid, total_violation_count, failure_cases_dataframe_or_None)
+    """
+    try:
+        schema.validate(df, lazy=True)
+        return True, 0, None
+    except pa.errors.SchemaErrors as err:
+        return False, len(err.failure_cases), err.failure_cases

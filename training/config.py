@@ -67,6 +67,7 @@ class DatasetSummary:
     lr_feature_names: list[str]
     xgb_feature_names: list[str]
     mlp_feature_names: list[str]
+    margin_feature_names: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -121,6 +122,11 @@ class TrainingData:
 
     summary: DatasetSummary
 
+    margin: FeatureSet | None = None
+    y_margin_train: pd.Series | None = None
+    y_margin_val: pd.Series | None = None
+    y_margin_test: pd.Series | None = None
+
 
 # ======================================================
 # Configurations
@@ -166,6 +172,10 @@ class TrainingConfig:
     
     mlp_prefixes: list[str] = field(
         default_factory=lambda: ["DELTA_", "EMBED_"]
+    )
+
+    margin_prefixes: list[str] = field(
+        default_factory=lambda: ["DELTA_"]
     )
 
     extra_features: list[str] = field(
@@ -252,6 +262,7 @@ class TrainingConfig:
     mlp_search_iterations: int = 30
     xgb_search_iterations: int = 20
     lr_search_iterations: int = 12
+    margin_search_iterations: int = 15
 
     # ======================================================
     # Hyperparameter Search Spaces
@@ -291,6 +302,24 @@ class TrainingConfig:
         default_factory=lambda: {
             "C": [0.001, 0.01, 0.1, 1.0, 10.0, 100.0],
             "solver": ["lbfgs", "liblinear"],
+        }
+    )
+
+    margin_model_type: str = "ridge"
+
+    margin_ridge_grid: dict[str, Any] = field(
+        default_factory=lambda: {
+            "alpha": [0.01, 0.1, 1.0, 10.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0],
+        }
+    )
+
+    margin_xgb_grid: dict[str, Any] = field(
+        default_factory=lambda: {
+            "learning_rate": [0.01, 0.05, 0.1],
+            "max_depth": [3, 5, 7],
+            "reg_lambda": [1, 5, 10, 20],
+            "n_estimators": [100, 200, 300],
+            "subsample": [0.8, 1.0],
         }
     )
 
@@ -349,6 +378,7 @@ class TrainingArtifacts:
     lr: ModelArtifacts = field(default_factory=ModelArtifacts)
     xgb: ModelArtifacts = field(default_factory=ModelArtifacts)
     mlp: ModelArtifacts = field(default_factory=ModelArtifacts)
+    margin: ModelArtifacts = field(default_factory=ModelArtifacts)
 
     ensemble_weights: np.ndarray | None = None
 

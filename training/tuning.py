@@ -1,20 +1,20 @@
 """
-Hyperparameter tuning utilities for the NBA prediction pipeline.
+Hyperparameter tuning and cross-validated probability calibration for NBA models.
 
-This module performs hyperparameter optimization for the MLP and
-XGBoost classifiers using RandomizedSearchCV with chronological
-cross-validation. Logistic Regression is trained using GridSearchCV.
+This module optimizes hyperparameters for the base classification architectures:
+- Multi-Layer Perceptron (MLP) via RandomizedSearchCV with adaptive learning rate
+- Gradient Boosted Trees (XGBoost) via RandomizedSearchCV
+- L2-Regularized Logistic Regression via GridSearchCV
 
-The best models and search results are saved for reproducibility,
-and all resulting estimators are probability-calibrated.
-
-Functions:
-    tune_base_models()
+All hyperparameter selections use chronological TimeSeriesSplit cross-validation
+evaluated on negative log-loss to optimize calibrated probability distributions
+rather than raw thresholded accuracy. Winning estimators undergo cross-validated
+sigmoid (Platt) calibration to mitigate overconfident probabilities.
 """
 
 import logging
 from pathlib import Path
-from typing import Tuple
+from typing import Any, Tuple
 
 import pandas as pd
 from sklearn.base import clone
@@ -34,7 +34,7 @@ from training.utils import save_json
 logger = logging.getLogger(__name__)
 
 # ======================================================
-# Output Files
+# Output Artifact Filenames
 # ======================================================
 
 MLP_PARAMS_FILE = "mlp_best_params.json"
@@ -47,48 +47,20 @@ LR_RESULTS_FILE = "lr_cv_results.csv"
 
 
 # ======================================================
-# Hyperparameter Tuning
+# Architecture-Specific Tuning Functions
 # ======================================================
 
-def tune_base_models(
-    data: TrainingData,
+def tune_mlp(
+    X_train: Any,
+    y_train: Any,
     config: TrainingConfig,
-    output_dir: Path,
-) -> Tuple[ModelArtifacts, ModelArtifacts, ModelArtifacts]:
+    tscv: TimeSeriesSplit,
+) -> RandomizedSearchCV:
     """
-    Tunes the MLP, XGBoost, and Logistic Regression classifiers using
-    chronological cross-validation.
-
-    The resulting best estimators are probability-calibrated using
-    CalibratedClassifierCV before being bundled into ModelArtifacts.
-
-    Args:
-        data:
-            The prepared training data containing model-specific feature sets.
-        config:
-            Training configuration containing search spaces.
-        output_dir:
-            Directory where tuning artifacts are saved.
-
-    Returns:
-        Tuple containing:
-            - MLP ModelArtifacts
-            - XGBoost ModelArtifacts
-            - Logistic Regression ModelArtifacts
+    Tunes Multi-Layer Perceptron hyperparameters over the configured parameter distributions.
+    Early stopping on training validation slices prevents overfitting.
     """
-    # --------------------------------------------------
-    # Time-series cross-validation
-    # --------------------------------------------------
-
-    tscv = TimeSeriesSplit(
-        n_splits=config.cv_folds
-    )
-
-    # --------------------------------------------------
-    # Hyperparameter searches
-    # --------------------------------------------------
-
-    mlp_search = RandomizedSearchCV(
+    search = RandomizedSearchCV(
         estimator=MLPClassifier(
             random_state=config.random_seed,
             early_stopping=True,
@@ -103,8 +75,22 @@ def tune_base_models(
         random_state=config.random_seed,
         n_jobs=-1,
     )
+    search.fit(X_train, y_train)
+    logger.info("      Best MLP CV Log Loss: %.4f", -search.best_score_)
+    return search
 
-    xgb_search = RandomizedSearchCV(
+
+def tune_xgboost(
+    X_train: Any,
+    y_train: Any,
+    config: TrainingConfig,
+    tscv: TimeSeriesSplit,
+) -> RandomizedSearchCV:
+    """
+    Tunes XGBoost gradient boosted trees with histogram-based binning.
+    Uses log-loss objective to penalize inaccurate probability distributions.
+    """
+    search = RandomizedSearchCV(
         estimator=XGBClassifier(
             random_state=config.random_seed,
             eval_metric="logloss",
@@ -118,8 +104,21 @@ def tune_base_models(
         random_state=config.random_seed,
         n_jobs=-1,
     )
+    search.fit(X_train, y_train)
+    logger.info("      Best XGBoost CV Log Loss: %.4f", -search.best_score_)
+    return search
 
-    lr_search = GridSearchCV(
+
+def tune_logistic_regression(
+    X_train: Any,
+    y_train: Any,
+    config: TrainingConfig,
+    tscv: TimeSeriesSplit,
+) -> GridSearchCV:
+    """
+    Exhaustively searches regularization penalty strengths (C) for Logistic Regression.
+    """
+    search = GridSearchCV(
         estimator=LogisticRegression(
             max_iter=1000,
             random_state=config.random_seed,
@@ -129,39 +128,88 @@ def tune_base_models(
         scoring="neg_log_loss",
         n_jobs=-1,
     )
+    search.fit(X_train, y_train)
+    logger.info("      Best Logistic Regression CV Log Loss: %.4f", -search.best_score_)
+    return search
 
-    # --------------------------------------------------
-    # Model training
-    # --------------------------------------------------
 
-    mlp_search.fit(
-        data.mlp.X_train_processed,
-        data.y_train,
-    )
-    
-    xgb_search.fit(
-        data.xgb.X_train,
-        data.y_train,
-    )
-    
-    lr_search.fit(
-        data.lr.X_train_processed,
-        data.y_train,
-    )
+# ======================================================
+# Probability Calibration
+# ======================================================
 
-    logger.info(
-        f"      Best MLP CV Log Loss: {-mlp_search.best_score_:.4f}"
-    )
-    logger.info(
-        f"      Best XGBoost CV Log Loss: {-xgb_search.best_score_:.4f}"
-    )
-    logger.info(
-        f"      Best Logistic Regression CV Log Loss: {-lr_search.best_score_:.4f}"
-    )
+def calibrate_classifier(
+    estimator: Any,
+    X_train: Any,
+    y_train: Any,
+    tscv: TimeSeriesSplit,
+) -> CalibratedClassifierCV:
+    """
+    Applies cross-validated Platt scaling (sigmoid calibration) to an estimator.
 
-    # --------------------------------------------------
-    # Probability calibration (Platt / sigmoid scaling)
-    # --------------------------------------------------
+    Platt scaling maps raw uncalibrated margins/logits into true posterior
+    win probabilities: P(Y=1|f) = 1 / (1 + exp(A*f + B)).
+    """
+    calibrated = CalibratedClassifierCV(
+        estimator=clone(estimator),
+        method="sigmoid",
+        cv=tscv,
+        n_jobs=-1,
+    )
+    calibrated.fit(X_train, y_train)
+    return calibrated
+
+
+def calibrate_best_models(
+    mlp_estimator: Any,
+    xgb_estimator: Any,
+    lr_estimator: Any,
+    data: TrainingData,
+    tscv: TimeSeriesSplit,
+) -> Tuple[CalibratedClassifierCV, CalibratedClassifierCV, CalibratedClassifierCV]:
+    """Fits cross-validated sigmoid probability calibration across all base models."""
+    mlp_cal = calibrate_classifier(mlp_estimator, data.mlp.X_train_processed, data.y_train, tscv)
+    xgb_cal = calibrate_classifier(xgb_estimator, data.xgb.X_train, data.y_train, tscv)
+    lr_cal = calibrate_classifier(lr_estimator, data.lr.X_train_processed, data.y_train, tscv)
+    return mlp_cal, xgb_cal, lr_cal
+
+
+# ======================================================
+# Serialization & Orchestration
+# ======================================================
+
+def save_tuning_results(
+    mlp_search: RandomizedSearchCV,
+    xgb_search: RandomizedSearchCV,
+    lr_search: GridSearchCV,
+    output_dir: Path,
+) -> None:
+    """Serializes best hyperparameters and cross-validation search dataframes."""
+    save_json(mlp_search.best_params_, output_dir / MLP_PARAMS_FILE)
+    save_json(xgb_search.best_params_, output_dir / XGB_PARAMS_FILE)
+    save_json(lr_search.best_params_, output_dir / LR_PARAMS_FILE)
+
+    pd.DataFrame(mlp_search.cv_results_).to_csv(output_dir / MLP_RESULTS_FILE, index=False)
+    pd.DataFrame(xgb_search.cv_results_).to_csv(output_dir / XGB_RESULTS_FILE, index=False)
+    pd.DataFrame(lr_search.cv_results_).to_csv(output_dir / LR_RESULTS_FILE, index=False)
+
+
+def tune_base_models(
+    data: TrainingData,
+    config: TrainingConfig,
+    output_dir: Path,
+) -> Tuple[ModelArtifacts, ModelArtifacts, ModelArtifacts]:
+    """
+    Orchestrates hyperparameter tuning and calibration for all three base classifiers.
+
+    Returns:
+        Tuple of (mlp_artifacts, xgb_artifacts, lr_artifacts) containing calibrated models.
+    """
+    tscv = TimeSeriesSplit(n_splits=config.cv_folds)
+
+    mlp_search = tune_mlp(data.mlp.X_train_processed, data.y_train, config, tscv)
+    xgb_search = tune_xgboost(data.xgb.X_train, data.y_train, config, tscv)
+    lr_search = tune_logistic_regression(data.lr.X_train_processed, data.y_train, config, tscv)
+
     logger.info("      Applying cross-validated calibration to base models...")
     mlp_calibrated, xgb_calibrated, lr_calibrated = calibrate_best_models(
         mlp_search.best_estimator_,
@@ -171,82 +219,10 @@ def tune_base_models(
         tscv,
     )
 
-    # --------------------------------------------------
-    # Save tuning artifacts
-    # --------------------------------------------------
     save_tuning_results(mlp_search, xgb_search, lr_search, output_dir)
 
-    # --------------------------------------------------
-    # Package into ModelArtifacts
-    # --------------------------------------------------
-    mlp_artifacts = ModelArtifacts(
-        feature_set=data.mlp,
-        model=mlp_calibrated,
-    )
-    xgb_artifacts = ModelArtifacts(
-        feature_set=data.xgb,
-        model=xgb_calibrated,
-    )
-    lr_artifacts = ModelArtifacts(
-        feature_set=data.lr,
-        model=lr_calibrated,
-    )
+    mlp_artifacts = ModelArtifacts(feature_set=data.mlp, model=mlp_calibrated)
+    xgb_artifacts = ModelArtifacts(feature_set=data.xgb, model=xgb_calibrated)
+    lr_artifacts = ModelArtifacts(feature_set=data.lr, model=lr_calibrated)
 
     return mlp_artifacts, xgb_artifacts, lr_artifacts
-
-
-def calibrate_best_models(
-    mlp_estimator,
-    xgb_estimator,
-    lr_estimator,
-    data: TrainingData,
-    tscv: TimeSeriesSplit,
-) -> Tuple[CalibratedClassifierCV, CalibratedClassifierCV, CalibratedClassifierCV]:
-    """Fits cross-validated sigmoid probability calibration on the best estimators."""
-    mlp_calibrated = CalibratedClassifierCV(
-        clone(mlp_estimator),
-        method="sigmoid",
-        cv=tscv,
-        n_jobs=-1,
-    )
-    mlp_calibrated.fit(data.mlp.X_train_processed, data.y_train)
-
-    xgb_calibrated = CalibratedClassifierCV(
-        clone(xgb_estimator),
-        method="sigmoid",
-        cv=tscv,
-        n_jobs=-1,
-    )
-    xgb_calibrated.fit(data.xgb.X_train, data.y_train)
-
-    lr_calibrated = CalibratedClassifierCV(
-        clone(lr_estimator),
-        method="sigmoid",
-        cv=tscv,
-        n_jobs=-1,
-    )
-    lr_calibrated.fit(data.lr.X_train_processed, data.y_train)
-
-    return mlp_calibrated, xgb_calibrated, lr_calibrated
-
-
-def save_tuning_results(
-    mlp_search,
-    xgb_search,
-    lr_search,
-    output_dir: Path,
-) -> None:
-    """Serializes best hyperparameters and cross-validation search dataframes."""
-    save_json(mlp_search.best_params_, output_dir / MLP_PARAMS_FILE)
-    save_json(xgb_search.best_params_, output_dir / XGB_PARAMS_FILE)
-    save_json(lr_search.best_params_, output_dir / LR_PARAMS_FILE)
-
-    pd.DataFrame(mlp_search.cv_results_).to_csv(
-        output_dir / MLP_RESULTS_FILE, index=False
-    )
-    pd.DataFrame(xgb_search.cv_results_).to_csv(
-        output_dir / XGB_RESULTS_FILE, index=False
-    )
-    pd.DataFrame(lr_search.cv_results_).to_csv(
-        output_dir / LR_RESULTS_FILE, index=False
-    )

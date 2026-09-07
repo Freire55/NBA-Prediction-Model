@@ -4,7 +4,7 @@
 [![Code Style: Clean & Modular](https://img.shields.io/badge/code%20style-production%20ready-green.svg)]()
 [![Validation: Pandera Contracts](https://img.shields.io/badge/data%20contracts-Pandera-yellow.svg)](https://pandera.readthedocs.io/)
 [![Storage: Apache Parquet](https://img.shields.io/badge/storage-Apache%20Parquet-orange.svg)]()
-[![Tests: Pytest Passing](https://img.shields.io/badge/tests-29%20passed-brightgreen.svg)]()
+[![Tests: Pytest Passing](https://img.shields.io/badge/tests-44%20passed-brightgreen.svg)]()
 
 A production-grade, leak-free machine learning system for predicting NBA regular-season game outcomes strictly using information available prior to tip-off. 
 
@@ -184,6 +184,18 @@ A model predicting a 70% win probability should win exactly 70 out of 100 times.
   $$\min_{\mathbf{w}} -\frac{1}{N} \sum_{i=1}^{N} \left[ y_i \ln\left(\sum_{m} w_m \hat{p}_{m,i}\right) + (1 - y_i)\ln\left(1 - \sum_{m} w_m \hat{p}_{m,i}\right) \right]$$
   $$\text{subject to} \quad \sum_{m=1}^{M} w_m = 1, \quad w_m \ge 0 \quad \forall m$$
 
+### 10. Continuous Margin Modeling & Pace-Modulated Normal CDF Conversion
+In binary classification ($y \in \{0, 1\}$), a 1-point buzzer-beater win and a 30-point blowout are treated identically, resulting in severe information loss. In sports analytics, **continuous point differential ($\Delta \text{PTS} = \text{HOME\_PTS} - \text{AWAY\_PTS}$)** possesses a far higher signal-to-noise ratio than raw win/loss outcomes:
+- **Continuous Margin Regressor (`MarginRegressor` in [`training/margin.py`](training/margin.py)):** Fits regularized $L_2$ linear models (Ridge) on comparative differential features (`DELTA_`) and gradient-boosted trees (XGBoost) using chronological `TimeSeriesSplit` cross-validation. It captures additive team strength differentials while tracking residual standard deviation ($\hat{\sigma}_0$).
+- **Central Limit Possession Scaling:** Point differential variance scales directly with the number of possessions played in a game:
+  $$\hat{\sigma}(\hat{\text{Pace}}) = \sigma_0 \times \sqrt{\frac{\hat{\text{Pace}}}{100.0}}$$
+- **Gaussian Normal CDF Probability Bridge (`PaceModulatedMarginClassifier`):** Converts continuous margin predictions into calibrated win probabilities:
+  $$P(\text{Home Win}) = \Phi\left(\frac{\hat{M}}{\hat{\sigma}(\hat{\text{Pace}})}\right)$$
+- **Domain Invariance (Favorite Safety vs. Upset Volatility):**
+  - In high-possession games (faster tempo), variance expands $\to$ underdog upset volatility increases.
+  - In low-possession games (slow grind-it-out pace), variance contracts $\to$ favorite safety increases.
+- **Full Scikit-Learn Compatibility:** The resulting converter adheres to scikit-learn's `ClassifierMixin` API, providing `.predict_proba()` and temperature parameter ($\sigma_0^*$) calibration via validation log-loss minimization.
+
 ---
 
 ## Strict Leakage Prevention & Data Contracts
@@ -228,6 +240,7 @@ nba-prediction-model/
 ├── training/
 │   ├── config.py                        # TrainingConfig, metadata tracking, grids & SBS toggle
 │   ├── data.py                          # Parquet/CSV ingestion & heterogeneous routing
+│   ├── margin.py                        # Continuous margin regressor & pace-modulated CDF converter
 │   ├── tuning.py                        # TimeSeriesSplit CV search & calibration
 │   ├── training.py                      # Retraining on combined train+val sets
 │   ├── ensemble.py                      # SLSQP log-loss constrained optimization
@@ -241,6 +254,7 @@ nba-prediction-model/
 │   ├── ensemble_test.py                 # SLSQP weight optimization tests
 │   ├── feature_engineering_test.py     # Schedule, rest, Four Factors, Pace & Altitude tests
 │   ├── leakage_test.py                  # Strict perturbation & shift invariance tests
+│   ├── margin_test.py                   # Margin regression & pace CDF probability converter tests
 │   ├── model_test.py                    # Classifier calibration tests
 │   ├── optimize_features_test.py        # Candidate deduplication, fast-track & SBS tests
 │   ├── schema_test.py                   # Pandera schema enforcement tests
@@ -284,7 +298,7 @@ pip install pyarrow pandera
 ```bash
 pytest
 ```
-*Executes all 29 unit, leakage, and integration tests in ~3 seconds.*
+*Executes all 44 unit, leakage, margin, and integration tests in ~8 seconds.*
 
 ### 3. Feature Generation Pipeline
 ```bash

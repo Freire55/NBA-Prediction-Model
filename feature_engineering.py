@@ -375,6 +375,7 @@ def merge_home_away_games(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]
     away_df = df[df['MATCHUP'].str.contains(' @ ')].copy().add_prefix('AWAY_')
     matchups_df = home_df.merge(away_df, left_on='HOME_GAME_ID', right_on='AWAY_GAME_ID')
     matchups_df['HOME_WIN'] = np.where(matchups_df['HOME_PTS'] > matchups_df['AWAY_PTS'], 1, 0)
+    matchups_df['TARGET_MARGIN'] = (matchups_df['HOME_PTS'] - matchups_df['AWAY_PTS']).astype("float32")
     matchups_df['SEASON_YEAR'] = matchups_df['HOME_SEASON_YEAR']
     return matchups_df, home_df
 

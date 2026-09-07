@@ -62,17 +62,23 @@ def apply_model_specific_reduction(master_data: TrainingData, removals: dict) ->
         )
 
     reduced_data = TrainingData(
-        mlp=reduce_fs(master_data.mlp, removals["mlp"]),
-        xgb=reduce_fs(master_data.xgb, removals["xgb"]),
-        lr=reduce_fs(master_data.lr, removals["lr"]),
+        mlp=reduce_fs(master_data.mlp, removals.get("mlp", [])),
+        xgb=reduce_fs(master_data.xgb, removals.get("xgb", [])),
+        lr=reduce_fs(master_data.lr, removals.get("lr", [])),
         y_train=master_data.y_train,
         y_val=master_data.y_val,
         y_test=master_data.y_test,
-        summary=master_data.summary
+        summary=master_data.summary,
+        margin=reduce_fs(master_data.margin, removals.get("margin", [])) if master_data.margin is not None else None,
+        y_margin_train=master_data.y_margin_train,
+        y_margin_val=master_data.y_margin_val,
+        y_margin_test=master_data.y_margin_test,
     )
     
     scale_features(reduced_data.mlp)
     scale_features(reduced_data.lr)
+    if reduced_data.margin is not None:
+        scale_features(reduced_data.margin)
     return reduced_data
 
 
@@ -367,7 +373,7 @@ def initialize_optimization_state(
         logger.info(f"[Resume] Resume iteration continues at {iteration}")
     else:
         phase1_start = time.perf_counter()
-        logger.info("[Phase 1] Establishing Heterogeneous Baseline...")
+        logger.info("Establishing Heterogeneous Baseline...")
         temp_artifacts = TrainingArtifacts(config=config, output_dir=CHECKPOINT_DIR)
         temp_artifacts.data = apply_model_specific_reduction(master_data, removals)
 
@@ -590,7 +596,7 @@ def main():
     # ==========================================
     # Elimination Loop
     # ==========================================
-    logger.info("[Phase 2] Beginning Independent Elimination Loop...")
+    logger.info("Beginning Independent Elimination Loop...")
     consecutive_failures = 0
     tested_in_current_state = {m: set() for m in ["mlp", "xgb", "lr"]}
     need_recompute_importances = True
