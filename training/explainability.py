@@ -40,6 +40,7 @@ MLP_IMPORTANCE_PLOT = "06_mlp_feature_importance.png"
 LR_COEFFICIENTS_PLOT = "07_lr_coefficients.png"
 SHAP_PLOT = "08_xgb_shap_summary.png"
 MARGIN_IMPORTANCE_PLOT = "09_margin_coefficients.png"
+CATBOOST_IMPORTANCE_PLOT = "11_catboost_feature_importance.png"
 
 COMBINED_RANKINGS_FILE = "combined_feature_rankings.csv"
 
@@ -212,6 +213,44 @@ def generate_margin_importance(
     return None
 
 
+def generate_catboost_importance(
+    artifacts: TrainingArtifacts,
+) -> Optional[pd.DataFrame]:
+    """Extracts native feature importance from the fitted CatBoost classifier."""
+    if artifacts.catboost.final_model is None or artifacts.catboost.feature_set is None:
+        return None
+
+    logger.info("      Extracting CatBoost Feature Importance...")
+    cb_raw = unwrap_base_estimator(artifacts.catboost.final_model)
+
+    if hasattr(cb_raw, "get_feature_importance"):
+        importances = cb_raw.get_feature_importance()
+    elif hasattr(cb_raw, "feature_importances_"):
+        importances = cb_raw.feature_importances_
+    else:
+        return None
+
+    importance_df = (
+        pd.DataFrame(
+            {
+                "Feature": artifacts.catboost.feature_set.feature_names,
+                "Importance": importances,
+            }
+        )
+        .sort_values("Importance", ascending=False)
+    )
+
+    plot_horizontal_bar(
+        importance_df,
+        "CatBoost Feature Importance (Top 15)",
+        CATBOOST_IMPORTANCE_PLOT,
+        sort_col="Importance",
+        output_dir=artifacts.output_dir,
+    )
+
+    return importance_df
+
+
 def generate_shap(
     artifacts: TrainingArtifacts,
 ) -> None:
@@ -250,6 +289,7 @@ def generate_explanations(
     """
     mlp_importance = generate_mlp_importance(artifacts)
     xgb_importance = generate_xgb_importance(artifacts)
+    catboost_importance = generate_catboost_importance(artifacts)
     lr_coefficients = generate_lr_coefficients(artifacts)
     margin_importance = generate_margin_importance(artifacts)
 
@@ -261,13 +301,21 @@ def generate_explanations(
             on="Feature",
             how="outer",
         )
-        .merge(
-            lr_coefficients[["Feature", "Abs_Weight"]].rename(
-                columns={"Abs_Weight": "Logistic_Regression"}
-            ),
+    )
+
+    if catboost_importance is not None:
+        combined = combined.merge(
+            catboost_importance[["Feature", "Importance"]].rename(columns={"Importance": "CatBoost"}),
             on="Feature",
             how="outer",
         )
+
+    combined = combined.merge(
+        lr_coefficients[["Feature", "Abs_Weight"]].rename(
+            columns={"Abs_Weight": "Logistic_Regression"}
+        ),
+        on="Feature",
+        how="outer",
     )
 
     if margin_importance is not None:

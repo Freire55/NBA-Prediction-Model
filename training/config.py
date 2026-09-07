@@ -68,6 +68,7 @@ class DatasetSummary:
     xgb_feature_names: list[str]
     mlp_feature_names: list[str]
     margin_feature_names: list[str] = field(default_factory=list)
+    catboost_feature_names: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -123,6 +124,7 @@ class TrainingData:
     summary: DatasetSummary
 
     margin: FeatureSet | None = None
+    catboost: FeatureSet | None = None
     y_margin_train: pd.Series | None = None
     y_margin_val: pd.Series | None = None
     y_margin_test: pd.Series | None = None
@@ -172,6 +174,10 @@ class TrainingConfig:
     
     mlp_prefixes: list[str] = field(
         default_factory=lambda: ["DELTA_", "EMBED_"]
+    )
+
+    catboost_prefixes: list[str] = field(
+        default_factory=lambda: ["HOME_", "AWAY_", "EMBED_"]
     )
 
     margin_prefixes: list[str] = field(
@@ -323,18 +329,32 @@ class TrainingConfig:
         }
     )
 
+    catboost_grid: dict[str, Any] = field(
+        default_factory=lambda: {
+            "depth": [4, 6],
+            "l2_leaf_reg": [1, 5, 10],
+            "learning_rate": [0.03, 0.07],
+            "iterations": [350],
+        }
+    )
+    catboost_search_iterations: int = 4
+
     def __post_init__(self) -> None:
         """Applies feature pruning if prune_optimized_features is True or via environment override."""
         env_override = os.environ.get("USE_OPTIMIZED_FEATURES")
         if env_override is not None:
             self.prune_optimized_features = (env_override == "1")
 
+        # CatBoost inherits tree feature removals by default
+        if "catboost" not in self.features_to_remove:
+            self.features_to_remove["catboost"] = list(self.features_to_remove.get("xgb", []))
+
         if self.prune_optimized_features:
-            for m in ["mlp", "xgb", "lr"]:
+            for m in ["mlp", "xgb", "lr", "catboost"]:
                 existing = set(self.features_to_remove.get(m, []))
                 for feat in self.optimized_features_to_remove.get(m, []):
                     if feat not in existing:
-                        self.features_to_remove[m].append(feat)
+                        self.features_to_remove.setdefault(m, []).append(feat)
 
     def to_dict(self) -> dict[str, Any]:
         """Returns the configuration as a serializable dictionary."""
@@ -378,9 +398,12 @@ class TrainingArtifacts:
     lr: ModelArtifacts = field(default_factory=ModelArtifacts)
     xgb: ModelArtifacts = field(default_factory=ModelArtifacts)
     mlp: ModelArtifacts = field(default_factory=ModelArtifacts)
+    catboost: ModelArtifacts = field(default_factory=ModelArtifacts)
     margin: ModelArtifacts = field(default_factory=ModelArtifacts)
 
     ensemble_weights: np.ndarray | None = None
+    ensemble_formula: dict[str, float] | None = None
+    calibration_report: dict[str, Any] | None = None
 
 
 def get_git_metadata() -> dict[str, Any]:

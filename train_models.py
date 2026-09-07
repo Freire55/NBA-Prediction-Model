@@ -95,12 +95,14 @@ def save_model_artifacts(artifacts: TrainingArtifacts) -> None:
     joblib_artifacts = {
         "mlp_model.pkl": artifacts.mlp.final_model,
         "xgb_model.pkl": artifacts.xgb.final_model,
+        "catboost_model.pkl": artifacts.catboost.final_model,
         "lr_model.pkl": artifacts.lr.final_model,
         "mlp_scaler.pkl": artifacts.mlp.feature_set.scaler,
         "lr_scaler.pkl": artifacts.lr.feature_set.scaler,
         "ensemble_weights.pkl": artifacts.ensemble_weights,
         "mlp_features.pkl": artifacts.data.summary.mlp_feature_names,
         "xgb_features.pkl": artifacts.data.summary.xgb_feature_names,
+        "catboost_features.pkl": artifacts.data.summary.catboost_feature_names,
         "lr_features.pkl": artifacts.data.summary.lr_feature_names,
     }
 
@@ -191,13 +193,18 @@ def run_stage_data_prep(artifacts: TrainingArtifacts, data_dir: Path, config: Tr
 
 
 def run_stage_tuning(artifacts: TrainingArtifacts, config: TrainingConfig, output_dir: Path) -> None:
-    """Stage 2: Hyperparameter optimization and Platt calibration across all architectures."""
+    """Stage 2: Hyperparameter optimization and model-selected calibration across all architectures."""
     with PipelineStage(2, TOTAL_PIPELINE_STAGES, "Hyperparameter tuning & probability calibration"):
-        artifacts.mlp, artifacts.xgb, artifacts.lr = tune_base_models(artifacts.data, config, output_dir)
-        logging.getLogger(__name__).info("      Base models successfully calibrated (Method: Sigmoid).")
+        (
+            artifacts.mlp,
+            artifacts.xgb,
+            artifacts.catboost,
+            artifacts.lr,
+        ) = tune_base_models(artifacts.data, config, output_dir)
+        logging.getLogger(__name__).info("      Base models successfully tuned and calibrated.")
 
         if artifacts.data.margin is not None and artifacts.data.y_margin_train is not None:
-            logging.getLogger(__name__).info("      Tuning Pace-Modulated Margin Regressor (Steps 7 & 8)...")
+            logging.getLogger(__name__).info("      Tuning Pace-Modulated Margin Regressor...")
             artifacts.margin, _ = tune_pace_margin_classifier(artifacts.data, config, output_dir)
 
 
@@ -205,12 +212,15 @@ def run_stage_ensemble(artifacts: TrainingArtifacts) -> Dict[str, float]:
     """Stage 3: Solves constrained optimization for optimal ensemble blending weights."""
     with PipelineStage(3, TOTAL_PIPELINE_STAGES, "Learning ensemble weighting"):
         weights, formula = learn_ensemble_weights(
-            artifacts.mlp,
-            artifacts.xgb,
-            artifacts.lr,
-            artifacts.data.y_val,
+            mlp=artifacts.mlp,
+            xgb=artifacts.xgb,
+            lr=artifacts.lr,
+            y_val=artifacts.data.y_val,
+            catboost=artifacts.catboost,
+            margin=artifacts.margin,
         )
         artifacts.ensemble_weights = weights
+        artifacts.ensemble_formula = formula
         return formula
 
 

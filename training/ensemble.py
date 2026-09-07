@@ -38,6 +38,7 @@ def _extract_validation_probabilities(
     mlp: ModelArtifacts,
     xgb: ModelArtifacts,
     lr: ModelArtifacts,
+    catboost: Optional[ModelArtifacts] = None,
     margin: Optional[ModelArtifacts] = None,
 ) -> Tuple[np.ndarray, List[str]]:
     """
@@ -48,10 +49,18 @@ def _extract_validation_probabilities(
     """
     mlp_probs = mlp.model.predict_proba(mlp.feature_set.X_val_processed)[:, 1]
     xgb_probs = xgb.model.predict_proba(xgb.feature_set.X_val)[:, 1]
-    lr_probs = lr.model.predict_proba(lr.feature_set.X_val_processed)[:, 1]
 
-    columns = [mlp_probs, xgb_probs, lr_probs]
-    names = ["MLP", "XGBoost", "Logistic Regression"]
+    columns = [mlp_probs, xgb_probs]
+    names = ["MLP", "XGBoost"]
+
+    if catboost is not None and catboost.model is not None and catboost.feature_set is not None:
+        cb_probs = catboost.model.predict_proba(catboost.feature_set.X_val)[:, 1]
+        columns.append(cb_probs)
+        names.append("CatBoost")
+
+    lr_probs = lr.model.predict_proba(lr.feature_set.X_val_processed)[:, 1]
+    columns.append(lr_probs)
+    names.append("Logistic Regression")
 
     if margin is not None and margin.model is not None:
         reg_type = getattr(getattr(margin.model, "regressor", margin.model), "model_type", "ridge")
@@ -62,7 +71,7 @@ def _extract_validation_probabilities(
         )
         margin_probs = margin.model.predict_proba(X_val)[:, 1]
         columns.append(margin_probs)
-        names.append("Margin CDF")
+        names.append("Pace Margin (CDF)")
 
     return np.column_stack(columns), names
 
@@ -126,6 +135,7 @@ def learn_ensemble_weights(
     xgb: ModelArtifacts,
     lr: ModelArtifacts,
     y_val: pd.Series,
+    catboost: Optional[ModelArtifacts] = None,
     margin: Optional[ModelArtifacts] = None,
 ) -> Tuple[np.ndarray, Dict[str, float]]:
     """
@@ -136,6 +146,7 @@ def learn_ensemble_weights(
         xgb: Trained XGBoost model artifact.
         lr: Trained Logistic Regression model artifact.
         y_val: Ground truth validation labels.
+        catboost: Optional trained CatBoost model artifact.
         margin: Optional trained Pace-Modulated Margin model artifact.
 
     Returns:
@@ -145,7 +156,9 @@ def learn_ensemble_weights(
     """
     logger.info("      Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...")
 
-    predictions_matrix, model_names = _extract_validation_probabilities(mlp, xgb, lr, margin)
+    predictions_matrix, model_names = _extract_validation_probabilities(
+        mlp=mlp, xgb=xgb, lr=lr, catboost=catboost, margin=margin
+    )
     weights = _optimize_weights_slsqp(predictions_matrix, y_val)
 
     formula = {name: float(w) for name, w in zip(model_names, weights)}

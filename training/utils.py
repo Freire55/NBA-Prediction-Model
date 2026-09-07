@@ -151,11 +151,14 @@ def unwrap_base_estimator(model: Any) -> Any:
     """
     if isinstance(model, CalibratedClassifierCV):
         calibrated_fold = model.calibrated_classifiers_[0]
-        return getattr(
+        inner = getattr(
             calibrated_fold,
             "estimator",
             getattr(calibrated_fold, "base_estimator", None),
         )
+        return unwrap_base_estimator(inner) if inner is not None else model
+    if hasattr(model, "estimator_"):
+        return unwrap_base_estimator(model.estimator_)
     return model
 
 

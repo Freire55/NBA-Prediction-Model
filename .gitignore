@@ -22,6 +22,7 @@ models/**/*_cv_results.csv
 models/run_*
 models/**/model.joblib
 optimization_checkpoints/
+catboost_info/
 
 # Execution logs
 *.log
@@ -42,3 +43,4 @@ htmlcov/
 # Temporary notes
 fixes.txt
 a_explanation.md
+model_improvements.md

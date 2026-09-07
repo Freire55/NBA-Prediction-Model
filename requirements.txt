@@ -3,6 +3,7 @@ numpy
 nba_api
 scikit-learn
 xgboost
+catboost
 scipy
 matplotlib
 shap
@@ -10,3 +11,4 @@ joblib
 pytest
 pandera
 pyarrow
+

@@ -247,7 +247,7 @@ def plot_margin_residual_distribution(
     """
     Visualizes point differential residuals against theoretical Gaussian curve.
 
-    Validates Step 8's normality assumption:
+    Validates normality assumption:
         Delta PTS ~ Normal(M_hat, sigma^2)
     """
     from scipy.stats import norm

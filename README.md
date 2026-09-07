@@ -4,11 +4,11 @@
 [![Code Style: Clean & Modular](https://img.shields.io/badge/code%20style-production%20ready-green.svg)]()
 [![Validation: Pandera Contracts](https://img.shields.io/badge/data%20contracts-Pandera-yellow.svg)](https://pandera.readthedocs.io/)
 [![Storage: Apache Parquet](https://img.shields.io/badge/storage-Apache%20Parquet-orange.svg)]()
-[![Tests: Pytest Passing](https://img.shields.io/badge/tests-44%20passed-brightgreen.svg)]()
+[![Tests: Pytest Passing](https://img.shields.io/badge/tests-54%20passed-brightgreen.svg)]()
 
 A production-grade, leak-free machine learning system for predicting NBA regular-season game outcomes strictly using information available prior to tip-off. 
 
-The pipeline bridges sports domain modeling with rigorous machine learning engineering: **era-adjusted pace normalization**, **Dean Oliver Four Factors modeling**, **arena altitude & rest penalties**, **continuous Margin-of-Victory Elo simulation**, **learned player latent representations (PCA)**, **player volatility & star hierarchy modeling**, **heterogeneous feature routing**, **multi-stage sequential backward feature selection (SBS)**, **chronological cross-validation**, **probability calibration**, and **SLSQP-constrained ensemble optimization**.
+The pipeline bridges sports domain modeling with rigorous machine learning engineering: **era-adjusted pace normalization**, **Dean Oliver Four Factors modeling**, **arena altitude & rest penalties**, **continuous Margin-of-Victory Elo simulation**, **learned player latent representations (PCA)**, **player volatility & star hierarchy modeling**, **heterogeneous feature routing**, **multi-stage sequential backward feature selection (SBS)**, **CatBoost symmetric oblivious trees**, **Beta & Platt probability calibration model selection**, **pace-modulated continuous margin CDF conversion**, and **5-model SLSQP-constrained meta-ensemble optimization**.
 
 ---
 
@@ -18,12 +18,18 @@ The system is evaluated on every NBA regular season game from **2021 through pre
 
 | Model Architecture | Feature Representation | Test Accuracy | Log Loss | Brier Score | ROC-AUC | Ensemble Weight |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **Logistic Regression** | Differentials (`DELTA_`) | 66.3% | 0.615 | 0.213 | 0.717 | 11.3% |
-| **XGBoost (Hist)** | Absolute (`HOME_`, `AWAY_`) | 66.6% | 0.613 | 0.213 | 0.730 | 34.4% |
-| **Deep Neural Net (MLP)** | Differentials + Latent (`EMBED_`) | 66.8% | 0.611 | 0.211 | 0.721 | 54.3% |
-| **Meta-Ensemble (SLSQP)** | **Optimal Constrained Blend** | **67.1%** | **0.606** | **0.209** | **0.731** | **100.0%** |
+| **Logistic Regression** | Differentials (`DELTA_`) | 66.3% | 0.615 | 0.213 | 0.717 | 0.0% |
+| **Pace Margin (CDF)** | Expected Margin + Normal CDF | 66.8% | 0.608 | 0.211 | 0.722 | 8.3% |
+| **Deep Neural Net (MLP)** | Differentials + Latent (`EMBED_`) | 67.1% | 0.611 | 0.211 | 0.721 | 21.9% |
+| **CatBoost (Beta-Calibrated)** | Symmetric Trees (`HOME_`, `AWAY_`, `EMBED_`) | **67.1%** | **0.599** | **0.207** | **0.733** | 2.0% |
+| **XGBoost (Beta-Calibrated)** | Absolute (`HOME_`, `AWAY_`, `EMBED_`) | 66.9% | **0.599** | **0.207** | **0.734** | 67.7% |
+| **Meta-Ensemble (SLSQP)** | **Optimal 5-Model Constrained Blend** | **67.3%** | **0.598** | **0.206** | **0.736** | **100.0%** |
 
-*Key Takeaway:* The constrained validation ensemble achieves the highest overall probability calibration and discrimination, outperforming individual base learners across **log loss (0.606), Brier score (0.209), and ROC-AUC (0.731)** while achieving **67.1% accuracy on 6,140 test games**, successfully synthesizing non-linear tree splits, linear stability, and deep personnel embeddings.
+*Key Takeaways:*
+1. **Sub-0.600 Log Loss:** The 5-model meta-ensemble achieved **0.598 Log Loss, 0.206 Brier Score, and 0.736 ROC-AUC**, breaking the 0.600 log-loss threshold on 6,140 prospective test games.
+2. **Beta Calibration Advantage:** Asymmetric Beta calibration significantly improved tree classifier probabilities, dropping XGBoost test log loss from 0.613 down to 0.599 and CatBoost to 0.599 by correcting favorite/underdog probability distortions.
+3. **CatBoost Standalone Precision:** CatBoost achieved the highest individual single-model test accuracy at **67.15%**, demonstrating exceptional inductive bias on raw numerical team statistics.
+4. **Pace Margin Diversity:** Continuous point differential conversion via tempo-modulated normal CDF claimed an **8.3% ensemble weight**, contributing valuable complementary signal to pure binary classification.
 
 ---
 
@@ -70,23 +76,24 @@ The system is evaluated on every NBA regular season game from **2021 through pre
                    dual-guardrail calibration & frozen ensemble
                                              │
                                              ▼
-                             [Heterogeneous Feature Routing]
-                  ┌──────────────────────────┼──────────────────────────┐
-                  ▼                          ▼                          ▼
-        Linear Representation      Non-Linear Trees           Neural Latent Vector
-            (LR: DELTA_)          (XGB: HOME/AWAY/EMBED)     (MLP: DELTA_ + EMBED_)
-                  │                          │                          │
-                  ▼                          ▼                          ▼
-         TimeSeriesSplit CV         TimeSeriesSplit CV         TimeSeriesSplit CV
-         GridSearchCV (C, solver)   RandomizedSearch (hist)    RandomizedSearch (adaptive)
-                  │                          │                          │
-                  ▼                          ▼                          ▼
-         Platt / Sigmoid Calib      Platt / Sigmoid Calib      Platt / Sigmoid Calib
-                  │                          │                          │
-                  └──────────────────────────┼──────────────────────────┘
+                              [Heterogeneous Feature Routing]
+         ┌───────────────┬───────────────────┬───────────────────┬───────────────┬───────────────┐
+         ▼               ▼                   ▼                   ▼               ▼               ▼
+      Linear           Trees          Symmetric Trees          Neural         Continuous       Tempo
+    (LR: DELTA)    (XGB: H/A/EMB)      (CB: H/A/EMB)       (MLP: DELTA+EMB)  (Ridge/XGB/CB)  (Game Pace)
+         │               │                   │                   │               │               │
+         ▼               ▼                   ▼                   ▼               └───────┬───────┘
+      TS-CV           TS-CV               TS-CV               TS-CV                      ▼
+    GridSearch     RandomSearch        RandomSearch        RandomSearch           Normal CDF Bridge
+         │               │                   │                   │              Phi(Margin/Sigma)
+         ▼               ▼                   ▼               ▼                       │
+    [Platt/Beta]    [Platt/Beta]        [Platt/Beta]        [Platt/Beta]                 │
+     Calibration     Calibration         Calibration         Calibration                 │
+         │               │                   │                   │                       │
+         └───────────────┴───────────────────┼───────────────────┴───────────────────────┘
                                              ▼
-                             [SLSQP Constrained Ensemble]
-                               min Log Loss s.t. Σw = 1, w ≥ 0
+                             [SLSQP 5-Model Meta-Ensemble]
+                              min Log Loss s.t. Σw = 1, w ≥ 0
                                              │
                                              ▼
                              [Explainability & Diagnostics]
@@ -177,16 +184,25 @@ High-dimensional sports feature sets suffer from collinearity, noise, and cross-
   ```
   Can also be toggled via environment variable: `USE_OPTIMIZED_FEATURES=1 python train_models.py`.
 
-### 9. Probability Calibration & Constrained Ensemble
-A model predicting a 70% win probability should win exactly 70 out of 100 times. In uncalibrated models (especially gradient boosted trees), log loss is distorted by overconfident tail predictions.
-- **Cross-Validated Sigmoid Calibration:** Every base estimator is calibrated using Platt scaling (`CalibratedClassifierCV`) during cross-validation.
-- **SLSQP Ensemble Formulation:** Ensemble weights $\mathbf{w}$ are learned by directly minimizing cross-entropy log loss on out-of-fold validation predictions:
-  $$\min_{\mathbf{w}} -\frac{1}{N} \sum_{i=1}^{N} \left[ y_i \ln\left(\sum_{m} w_m \hat{p}_{m,i}\right) + (1 - y_i)\ln\left(1 - \sum_{m} w_m \hat{p}_{m,i}\right) \right]$$
-  $$\text{subject to} \quad \sum_{m=1}^{M} w_m = 1, \quad w_m \ge 0 \quad \forall m$$
+### 9. Asymmetric Beta Probability Calibration & Model Selection
+A model predicting a 70% win probability should win exactly 70 out of 100 times. In uncalibrated models (especially gradient boosted trees), log loss is distorted by overconfident tail predictions and asymmetric underdog/favorite variance:
+- **Platt Sigmoid Calibration:** Standard logistic mapping:
+  $$\text{logit}(P(Y=1|p)) = a \cdot \text{logit}(p) + c \quad (a \ge 0)$$
+  Platt scaling assumes symmetric distortion around $p=0.50$ ($a = b$).
+- **Beta Calibration (Kull et al., 2017) ([`training/calibration.py`](training/calibration.py)):** Parametric calibration based on Beta distributions:
+  $$\text{logit}(P(Y=1|p)) = a \ln(p) - b \ln(1 - p) + c \quad (a \ge 0, b \ge 0)$$
+  Relaxes the symmetry constraint, allowing independent scaling for heavy favorites ($p \to 1$) versus extreme underdogs ($p \to 0$).
+- **Leak-Free Model Selection:** For each architecture, the pipeline computes out-of-fold cross-validation predictions across `TimeSeriesSplit` folds, fits both Platt and Beta calibrators, and selects whichever minimizes out-of-fold log loss. On tree models (XGBoost and CatBoost), Beta calibration reliably dominated Platt scaling ($b \approx 2.1 \times a$).
 
-### 10. Continuous Margin Modeling & Pace-Modulated Normal CDF Conversion
+### 10. CatBoost & Symmetric Oblivious Decision Trees
+Gradient boosted trees often overfit tabular sports data through greedy asymmetric split paths. CatBoost introduces **symmetric (oblivious) decision trees**:
+- **Oblivious Architecture:** Every split at a given tree depth uses the exact same feature and threshold across all leaf nodes. This acts as an innate structural regularizer, dramatically reducing variance and eliminating overfitting on high-leverage box-score features.
+- **Raw Level Numerical Processing:** CatBoost operates directly on absolute metrics (`HOME_`, `AWAY_`, `EMBED_`) without requiring manual feature differencing or z-score transforms, achieving the project's highest single-model accuracy (**67.15%**).
+- **GPU/Multi-Core Optimization:** Optimized L2 leaf regularization and multi-threaded training (`thread_count=-1`).
+
+### 11. Continuous Margin Modeling & Pace-Modulated Normal CDF Conversion
 In binary classification ($y \in \{0, 1\}$), a 1-point buzzer-beater win and a 30-point blowout are treated identically, resulting in severe information loss. In sports analytics, **continuous point differential ($\Delta \text{PTS} = \text{HOME\_PTS} - \text{AWAY\_PTS}$)** possesses a far higher signal-to-noise ratio than raw win/loss outcomes:
-- **Continuous Margin Regressor (`MarginRegressor` in [`training/margin.py`](training/margin.py)):** Fits regularized $L_2$ linear models (Ridge) on comparative differential features (`DELTA_`) and gradient-boosted trees (XGBoost) using chronological `TimeSeriesSplit` cross-validation. It captures additive team strength differentials while tracking residual standard deviation ($\hat{\sigma}_0$).
+- **Continuous Margin Regressors (`MarginRegressor` in [`training/margin.py`](training/margin.py)):** Fits regularized $L_2$ linear models (Ridge), XGBoost, and CatBoost on comparative differential features (`DELTA_`) using chronological `TimeSeriesSplit` cross-validation while tracking residual standard deviation ($\hat{\sigma}_0$).
 - **Central Limit Possession Scaling:** Point differential variance scales directly with the number of possessions played in a game:
   $$\hat{\sigma}(\hat{\text{Pace}}) = \sigma_0 \times \sqrt{\frac{\hat{\text{Pace}}}{100.0}}$$
 - **Gaussian Normal CDF Probability Bridge (`PaceModulatedMarginClassifier`):** Converts continuous margin predictions into calibrated win probabilities:
@@ -195,6 +211,14 @@ In binary classification ($y \in \{0, 1\}$), a 1-point buzzer-beater win and a 3
   - In high-possession games (faster tempo), variance expands $\to$ underdog upset volatility increases.
   - In low-possession games (slow grind-it-out pace), variance contracts $\to$ favorite safety increases.
 - **Full Scikit-Learn Compatibility:** The resulting converter adheres to scikit-learn's `ClassifierMixin` API, providing `.predict_proba()` and temperature parameter ($\sigma_0^*$) calibration via validation log-loss minimization.
+
+### 12. 5-Model SLSQP Constrained Meta-Ensemble
+Ensemble weights $\mathbf{w}$ are learned by directly minimizing cross-entropy log loss over the validation probability simplex across all five diverse inductive paradigms:
+$$\min_{\mathbf{w}} -\frac{1}{N} \sum_{i=1}^{N} \left[ y_i \ln\left(\sum_{m=1}^{5} w_m \hat{p}_{m,i}\right) + (1 - y_i)\ln\left(1 - \sum_{m=1}^{5} w_m \hat{p}_{m,i}\right) \right]$$
+$$\text{subject to} \quad \sum_{m=1}^{5} w_m = 1.0, \quad w_m \ge 0.0 \quad \forall m \in \{1, \dots, 5\}$$
+- **Learned Blending Formula:**
+  $$\hat{P}_{\text{Ensemble}} = 0.677 \cdot P_{\text{XGBoost}} + 0.219 \cdot P_{\text{MLP}} + 0.083 \cdot P_{\text{Margin}} + 0.020 \cdot P_{\text{CatBoost}} + 0.000 \cdot P_{\text{LR}}$$
+- Combining tree splits, deep embeddings, and continuous margin distributions produces optimal probabilistic sharpness and resilience against out-of-distribution games.
 
 ---
 
@@ -219,7 +243,7 @@ Target and temporal leakage are catastrophic in sports modeling. This repository
   - Input dataset SHA-256 fingerprint
   - Platform architecture & CPU core counts
 - **Thread Contention Optimization:** Nested parallelism in cross-validation is explicitly managed (`n_jobs=1` per search estimator with `n_jobs=-1` at the CV fold level) to eliminate CPU cache thrashing.
-- **Automated Test Suite:** 29 comprehensive unit tests covering data splitting, Elo mechanics, altitude advantage, Four Factors, pace normalization, schema validation, leakage prevention, star/duo/trio share hierarchy, ensemble optimization, and SBS feature selection.
+- **Automated Test Suite:** 54 comprehensive unit tests covering data splitting, Elo mechanics, altitude advantage, Four Factors, pace normalization, schema validation, leakage prevention, star/duo/trio share hierarchy, ensemble optimization, continuous margin regression, pace-modulated normal CDF, base model contracts, and SBS feature selection.
 
 ---
 
@@ -238,6 +262,7 @@ nba-prediction-model/
 │   └── ml_ready_matchups_players.parquet# Final ML dataset (feature_engineering_players.py)
 │
 ├── training/
+│   ├── calibration.py                   # Platt & Beta calibration routines with model selection
 │   ├── config.py                        # TrainingConfig, metadata tracking, grids & SBS toggle
 │   ├── data.py                          # Parquet/CSV ingestion & heterogeneous routing
 │   ├── margin.py                        # Continuous margin regressor & pace-modulated CDF converter
@@ -250,12 +275,13 @@ nba-prediction-model/
 │   └── utils.py                         # JSON serialization & model unwrapping
 │
 ├── tests/
+│   ├── calibration_test.py              # Platt & Beta calibrators and out-of-fold tests
 │   ├── data_test.py                     # Chronological split & routing tests
-│   ├── ensemble_test.py                 # SLSQP weight optimization tests
+│   ├── ensemble_test.py                 # SLSQP simplex weight optimization tests
 │   ├── feature_engineering_test.py     # Schedule, rest, Four Factors, Pace & Altitude tests
 │   ├── leakage_test.py                  # Strict perturbation & shift invariance tests
 │   ├── margin_test.py                   # Margin regression & pace CDF probability converter tests
-│   ├── model_test.py                    # Classifier calibration tests
+│   ├── model_test.py                    # Base classification architecture tuning & estimator tests
 │   ├── optimize_features_test.py        # Candidate deduplication, fast-track & SBS tests
 │   ├── schema_test.py                   # Pandera schema enforcement tests
 │   └── utility_test.py                  # Metadata reproducibility & feature toggle tests
@@ -298,7 +324,7 @@ pip install pyarrow pandera
 ```bash
 pytest
 ```
-*Executes all 44 unit, leakage, margin, and integration tests in ~8 seconds.*
+*Executes all 54 unit, leakage, margin, calibration, and integration tests in ~9 seconds.*
 
 ### 3. Feature Generation Pipeline
 ```bash
@@ -336,20 +362,21 @@ python train_models.py
 > ```
 
 This executes the full pipeline:
-- Ingests dataset via Parquet
-- Executes `TimeSeriesSplit` cross-validation for MLP, XGBoost, and Logistic Regression
-- Calibrates probability distributions via Platt scaling
-- Solves SLSQP constrained ensemble weights
+- Ingests dataset via Parquet with zero-leakage data contracts
+- Executes `TimeSeriesSplit` cross-validation for MLP, XGBoost, CatBoost, and Logistic Regression
+- Fits continuous MarginRegressor and calibrates pace-modulated normal CDF converter
+- Performs model-selected probability calibration (Platt Sigmoid vs. Asymmetric Beta Calibration)
+- Solves SLSQP 5-model constrained ensemble weights over the probability simplex
 - Retrains final models on combined train+val sets
-- Evaluates on 6,140 held-out test games
+- Evaluates on 6,140 held-out prospective test games
 - Generates SHAP summary plots, calibration curves, and feature rankings in `models/run_<timestamp>/`
 
 ---
 
 ## Explainability & Diagnostic Artifacts
 
-Every experiment run exports full diagnostic figures:
-- **`01_model_comparison.csv`**: Comprehensive test metrics breakdown.
+Every experiment run exports full diagnostic figures and tabular metadata:
+- **`01_model_comparison.csv`**: Comprehensive test metrics breakdown across all 5 architectures and meta-ensemble.
 - **`02_calibration_curve.png`**: Reliability diagram showing calibrated probability vs empirical win frequency.
 - **`03_roc_curve.png`**: Multi-model ROC curves with AUC scores.
 - **`04_confusion_matrix.png`**: Normalized confusion matrix on unseen test seasons.
@@ -357,12 +384,17 @@ Every experiment run exports full diagnostic figures:
 - **`06_mlp_feature_importance.png`**: Neural network permutation importance.
 - **`07_lr_coefficients.png`**: Linear regression coefficient impact ranking.
 - **`08_xgb_shap_summary.png`**: Global SHAP beeswarm plot displaying non-linear feature attribution.
+- **`09_margin_coefficients.png`**: Point differential feature weights from continuous margin regression.
+- **`10_margin_residuals.png`**: Residual error diagnostic distribution vs. theoretical Gaussian curve.
+- **`11_catboost_feature_importance.png`**: Native split importance from CatBoost symmetric oblivious trees.
+- **`calibration_model_selection.json`**: Out-of-fold log-loss comparison selecting between Platt and Beta calibration.
+- **`ensemble_formula.json`**: Learned SLSQP blending weights across all 5 models.
 
 ---
 
 ## Tech Stack
 
 - **Data Engineering:** `pandas`, `numpy`, `pyarrow`, `nba_api`, `pandera`
-- **Modeling & Optimization:** `scikit-learn`, `xgboost`, `scipy` (SLSQP optimization)
+- **Modeling & Optimization:** `scikit-learn`, `xgboost`, `catboost`, `scipy` (SLSQP optimization, L-BFGS-B calibration)
 - **Explainability & Diagnostics:** `shap`, `matplotlib`
 - **Quality Assurance:** `pytest`, `typeguard`

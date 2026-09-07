@@ -1,9 +1,9 @@
 """
-Unit tests for the Continuous Margin Regressor module (Step 7).
+Unit tests for the Continuous Margin Regressor module.
 
 Validates:
 1. MarginRegressor estimator API compatibility (fit, predict, get_residuals).
-2. Support for both Ridge and XGBoost regression architectures.
+2. Support for Ridge, XGBoost, and CatBoost regression architectures.
 3. Residual standard error (sigma) and bias calculation.
 4. Evaluation metrics (RMSE, MAE, R², Directional Accuracy).
 5. Monotonicity: superior ratings consistently produce higher predicted margins.
@@ -154,6 +154,25 @@ def test_margin_regressor_xgb_fit_predict(synthetic_margin_data):
     assert not np.isnan(preds).any()
 
 
+def test_margin_regressor_catboost_fit_predict(synthetic_margin_data):
+    """Tests fitting and prediction with CatBoost MarginRegressor."""
+    X_train, y_train, X_val, y_val = synthetic_margin_data
+
+    reg = MarginRegressor(
+        model_type="catboost",
+        catboost_params={"iterations": 20, "depth": 3, "verbose": 0},
+        random_state=42,
+    )
+    reg.fit(X_train, y_train)
+
+    assert reg.is_fitted_
+    preds = reg.predict(X_val)
+
+    assert len(preds) == len(y_val)
+    assert not np.isnan(preds).any()
+    assert reg.residual_std_ > 0.0
+
+
 def test_margin_metrics_evaluation():
     """Validates computation of regression and directional diagnostic metrics."""
     y_true = np.array([10.0, -4.0, 5.0, -8.0, 2.0])
@@ -245,7 +264,7 @@ def test_margin_feature_set_contains_zero_leakage():
 
 
 # ======================================================
-# Step 8: Pace-Modulated Normal CDF Tests
+# Pace-Modulated Normal CDF Tests
 # ======================================================
 
 def test_pace_modulated_classifier_proba_properties():

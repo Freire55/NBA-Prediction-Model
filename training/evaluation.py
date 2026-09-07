@@ -119,8 +119,16 @@ def _collect_test_probabilities(
     probs_dict = {
         "MLP": mlp_probs,
         "XGBoost": xgb_probs,
-        "Logistic Regression": lr_probs,
     }
+
+    # CatBoost Model
+    if artifacts.catboost.final_model is not None and artifacts.catboost.feature_set is not None:
+        cb_probs = artifacts.catboost.final_model.predict_proba(
+            artifacts.catboost.feature_set.X_test
+        )[:, 1]
+        probs_dict["CatBoost"] = cb_probs
+
+    probs_dict["Logistic Regression"] = lr_probs
 
     # Margin Model
     margin_probs = _extract_margin_test_probabilities(artifacts)
@@ -128,28 +136,19 @@ def _collect_test_probabilities(
         probs_dict["Pace Margin (CDF)"] = margin_probs
 
     # Weighted Ensemble
-    weights = artifacts.ensemble_weights
-    if weights is not None:
-        if len(weights) == 3:
-            ensemble_probs = (
-                weights[0] * mlp_probs
-                + weights[1] * xgb_probs
-                + weights[2] * lr_probs
-            )
-        elif len(weights) == 4 and margin_probs is not None:
-            ensemble_probs = (
-                weights[0] * mlp_probs
-                + weights[1] * xgb_probs
-                + weights[2] * lr_probs
-                + weights[3] * margin_probs
-            )
-        else:
-            ensemble_probs = (
-                weights[0] * mlp_probs
-                + weights[1] * xgb_probs
-                + weights[2] * lr_probs
-            )
-        probs_dict["Ensemble"] = ensemble_probs
+    if artifacts.ensemble_formula is not None:
+        ensemble_probs = np.zeros_like(mlp_probs, dtype=np.float64)
+        for model_name, weight in artifacts.ensemble_formula.items():
+            if model_name in probs_dict and weight > 0:
+                ensemble_probs += weight * probs_dict[model_name]
+        probs_dict["Ensemble"] = np.clip(ensemble_probs, 1e-15, 1.0 - 1e-15)
+    elif artifacts.ensemble_weights is not None:
+        weights = artifacts.ensemble_weights
+        if len(weights) == len(probs_dict):
+            ensemble_probs = np.zeros_like(mlp_probs, dtype=np.float64)
+            for w, (model_name, p) in zip(weights, list(probs_dict.items())):
+                ensemble_probs += w * p
+            probs_dict["Ensemble"] = np.clip(ensemble_probs, 1e-15, 1.0 - 1e-15)
 
     return probs_dict
 

@@ -235,7 +235,7 @@ def add_volatility_features(
 # ======================================================
 
 # ======================================================
-# Pipeline Step Functions
+# Pipeline Functions
 # ======================================================
 
 def load_input_datasets(data_dir: Path = DATA_DIR) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:

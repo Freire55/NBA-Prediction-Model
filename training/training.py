@@ -169,6 +169,13 @@ def retrain_on_full_data(artifacts: TrainingArtifacts) -> None:
         artifacts.lr.model, lr_train_scaled, y_train_full
     )
 
+    if artifacts.catboost.model is not None and data.catboost is not None:
+        catboost_train_full = _combine_splits(data.catboost.X_train, data.catboost.X_val)
+        artifacts.catboost.final_model = _retrain_classifier(
+            artifacts.catboost.model, catboost_train_full, y_train_full
+        )
+        artifacts.catboost.feature_set.X_train_full = catboost_train_full
+
     # Update feature set state
     artifacts.mlp.feature_set.scaler = mlp_scaler
     artifacts.mlp.feature_set.X_train_full = mlp_train_full

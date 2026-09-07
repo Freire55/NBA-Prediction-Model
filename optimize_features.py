@@ -372,7 +372,7 @@ def initialize_optimization_state(
         )
         logger.info(f"[Resume] Resume iteration continues at {iteration}")
     else:
-        phase1_start = time.perf_counter()
+        baseline_start = time.perf_counter()
         logger.info("Establishing Heterogeneous Baseline...")
         temp_artifacts = TrainingArtifacts(config=config, output_dir=CHECKPOINT_DIR)
         temp_artifacts.data = apply_model_specific_reduction(master_data, removals)
@@ -397,7 +397,7 @@ def initialize_optimization_state(
             f"XGB: {current_standalone_losses['xgb']:.5f} | LR: {current_standalone_losses['lr']:.5f}"
         )
         logger.info(f"Baseline Ensemble Formula: {current_formula}")
-        logger.info(f"Baseline completed in {format_time(time.perf_counter() - phase1_start)}\n")
+        logger.info(f"Baseline completed in {format_time(time.perf_counter() - baseline_start)}\n")
 
         save_lean_checkpoint(
             removals, best_full_logloss, current_weights,

@@ -1,11 +1,11 @@
 """
 Continuous Margin-of-Victory Regressor and Pace-Modulated Normal CDF Classifier.
 
-This module implements:
-- Step 7: Continuous Margin Regressor predicting expected point differential
+This module implements continuous margin regression and pace-modulated probability conversion:
+- Continuous Margin Regressor predicting expected point differential
   (Delta PTS = HOME_PTS - AWAY_PTS) via regularized Ridge and tree regressors
   with TimeSeriesSplit cross-validation and residual diagnostic analysis.
-- Step 8: Pace-Modulated Normal CDF Converter translating continuous margin
+- Pace-Modulated Normal CDF Converter translating continuous margin
   forecasts into well-calibrated win probabilities:
       sigma_game = sigma_0 * sqrt(expected_pace / 100.0)
       P(Home Win) = Phi(M_hat / sigma_game)
@@ -131,17 +131,18 @@ def evaluate_classification_metrics(
 
 
 # ======================================================
-# Margin Regressor Estimator (Step 7)
+# Margin Regressor Estimator
 # ======================================================
 
 class MarginRegressor(BaseEstimator, RegressorMixin):
     """
     Estimator predicting continuous game point differential (HOME_PTS - AWAY_PTS).
 
-    Supports Ridge regression (optimal for linear additive differentials)
-    and XGBoost regression (for non-linear blowout dynamics).
+    Supports Ridge regression (optimal for linear additive differentials),
+    XGBoost regression (for non-linear blowout dynamics), and
+    CatBoost regression (symmetric oblivious trees with ordered boosting).
     Computes and stores out-of-fold and training residual statistics (sigma)
-    required for Normal CDF win-probability conversion in Step 8.
+    required for Normal CDF win-probability conversion.
     """
 
     def __init__(
@@ -149,12 +150,14 @@ class MarginRegressor(BaseEstimator, RegressorMixin):
         model_type: str = "ridge",
         alpha: float = 100.0,
         xgb_params: Optional[Dict[str, Any]] = None,
+        catboost_params: Optional[Dict[str, Any]] = None,
         scaler: Optional[StandardScaler] = None,
         random_state: int = 42,
     ) -> None:
         self.model_type = model_type
         self.alpha = alpha
         self.xgb_params = xgb_params or {}
+        self.catboost_params = catboost_params or {}
         self.scaler = scaler
         self.random_state = random_state
 
@@ -185,9 +188,22 @@ class MarginRegressor(BaseEstimator, RegressorMixin):
             }
             default_xgb.update(self.xgb_params)
             return XGBRegressor(**default_xgb)
+        elif self.model_type == "catboost":
+            from catboost import CatBoostRegressor
+            default_cb = {
+                "iterations": 300,
+                "learning_rate": 0.05,
+                "depth": 5,
+                "l2_leaf_reg": 5.0,
+                "random_seed": self.random_state,
+                "thread_count": -1,
+                "verbose": False,
+            }
+            default_cb.update(self.catboost_params)
+            return CatBoostRegressor(**default_cb)
         else:
             raise ValueError(
-                f"Unsupported model_type '{self.model_type}'. Choose 'ridge' or 'xgb'."
+                f"Unsupported model_type '{self.model_type}'. Choose 'ridge', 'xgb', or 'catboost'."
             )
 
     def fit(
@@ -265,7 +281,7 @@ class MarginRegressor(BaseEstimator, RegressorMixin):
 
 
 # ======================================================
-# Pace-Modulated Normal CDF Classifier (Step 8)
+# Pace-Modulated Normal CDF Classifier
 # ======================================================
 
 class PaceModulatedMarginClassifier(BaseEstimator, ClassifierMixin):
@@ -540,8 +556,53 @@ def tune_margin_regressor(
         )
         regressor.fit(X_train, y_train)
 
+    elif m_type == "catboost":
+        from catboost import CatBoostRegressor
+
+        X_train = data.margin.X_train
+        X_val = data.margin.X_val
+        y_train = data.y_margin_train
+        y_val = data.y_margin_val
+
+        grid = getattr(
+            config,
+            "margin_catboost_grid",
+            {
+                "depth": [4, 6],
+                "l2_leaf_reg": [1, 5, 10],
+                "learning_rate": [0.03, 0.05, 0.08],
+                "iterations": [250, 350],
+            },
+        )
+        search = RandomizedSearchCV(
+            estimator=CatBoostRegressor(
+                random_seed=config.random_seed,
+                thread_count=-1,
+                verbose=False,
+            ),
+            param_distributions=grid,
+            n_iter=getattr(config, "margin_catboost_search_iterations", 6),
+            cv=tscv,
+            scoring="neg_root_mean_squared_error",
+            random_state=config.random_seed,
+            n_jobs=1,
+        )
+        search.fit(X_train, y_train)
+
+        best_params = search.best_params_
+        logger.info(
+            f"      Best Margin CatBoost CV RMSE: {-search.best_score_:.4f} (params={best_params})"
+        )
+
+        regressor = MarginRegressor(
+            model_type="catboost",
+            xgb_params=best_params,
+            random_state=config.random_seed,
+        )
+        regressor.fit(X_train, y_train)
+
     else:
-        raise ValueError(f"Unknown margin model type '{m_type}'.")
+        raise ValueError(f"Unknown margin model type '{m_type}'. Choose 'ridge', 'xgb', or 'catboost'.")
 
     # Evaluate on held-out validation set
     val_preds = regressor.predict(X_val)
@@ -575,7 +636,7 @@ def tune_pace_margin_classifier(
     output_dir: Optional[Path] = None,
 ) -> Tuple[ModelArtifacts, Dict[str, float]]:
     """
-    End-to-end tuning for the Pace-Modulated Normal CDF Margin Classifier (Steps 7 & 8).
+    End-to-end tuning for the Pace-Modulated Normal CDF Margin Classifier.
 
     1. Tunes and fits the optimal continuous MarginRegressor on training data.
     2. Calibrates tempo-scaled standard error (sigma_0) on chronological validation data.
@@ -589,7 +650,7 @@ def tune_pace_margin_classifier(
     Returns:
         Tuple containing ModelArtifacts and validation classification metrics.
     """
-    # Step 7: Train optimal margin regressor
+    # Train optimal margin regressor
     regressor_artifact, margin_metrics = tune_margin_regressor(
         data=data,
         config=config,
@@ -597,7 +658,7 @@ def tune_pace_margin_classifier(
     )
     tuned_regressor: MarginRegressor = regressor_artifact.model
 
-    # Step 8: Build and calibrate PaceModulatedMarginClassifier
+    # Build and calibrate PaceModulatedMarginClassifier
     classifier = PaceModulatedMarginClassifier(
         regressor=tuned_regressor,
         base_pace=DEFAULT_BASE_PACE,
