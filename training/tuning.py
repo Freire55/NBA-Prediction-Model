@@ -14,7 +14,7 @@ sigmoid (Platt) calibration to mitigate overconfident probabilities.
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
 from catboost import CatBoostClassifier
@@ -52,6 +52,123 @@ CALIBRATION_REPORT_FILE = "calibration_model_selection.json"
 
 
 # ======================================================
+# Early-Stopping Estimator Wrappers
+# ======================================================
+
+class EarlyStoppingXGBClassifier(XGBClassifier):
+    """
+    XGBClassifier with built-in chronological early stopping.
+    Automatically splits off the trailing fraction of training data as an evaluation set.
+    """
+
+    def __init__(
+        self,
+        early_stopping_rounds: Optional[int] = 25,
+        val_fraction: float = 0.1,
+        **kwargs: Any,
+    ) -> None:
+        self.val_fraction = val_fraction
+        super().__init__(early_stopping_rounds=early_stopping_rounds, **kwargs)
+
+    def get_xgb_params(self) -> Dict[str, Any]:
+        params = super().get_xgb_params()
+        params.pop("val_fraction", None)
+        return params
+
+    def fit(self, X: Any, y: Any, **kwargs: Any) -> Any:
+        n = len(X)
+        split = max(int(n * (1.0 - self.val_fraction)), 1)
+        if split < n and self.early_stopping_rounds:
+            X_tr = X.iloc[:split] if hasattr(X, "iloc") else X[:split]
+            X_val = X.iloc[split:] if hasattr(X, "iloc") else X[split:]
+            y_tr = y.iloc[:split] if hasattr(y, "iloc") else y[:split]
+            y_val = y.iloc[split:] if hasattr(y, "iloc") else y[split:]
+            return super().fit(
+                X_tr,
+                y_tr,
+                eval_set=[(X_val, y_val)],
+                verbose=False,
+                **kwargs,
+            )
+        return super().fit(X, y, verbose=False, **kwargs)
+
+
+class EarlyStoppingCatBoostClassifier(CatBoostClassifier):
+    """
+    CatBoostClassifier with built-in chronological early stopping.
+    Automatically splits off the trailing fraction of training data as an evaluation set.
+    """
+
+    def __init__(
+        self,
+        early_stopping_rounds: int = 25,
+        val_fraction: float = 0.1,
+        **kwargs: Any,
+    ) -> None:
+        self.early_stopping_rounds = early_stopping_rounds
+        self.val_fraction = val_fraction
+        super().__init__(**kwargs)
+
+    def fit(self, X: Any, y: Any, **kwargs: Any) -> Any:
+        n = len(X)
+        split = max(int(n * (1.0 - self.val_fraction)), 1)
+        if split < n and self.early_stopping_rounds:
+            X_tr = X.iloc[:split] if hasattr(X, "iloc") else X[:split]
+            X_val = X.iloc[split:] if hasattr(X, "iloc") else X[split:]
+            y_tr = y.iloc[:split] if hasattr(y, "iloc") else y[:split]
+            y_val = y.iloc[split:] if hasattr(y, "iloc") else y[split:]
+            return super().fit(
+                X_tr,
+                y_tr,
+                eval_set=(X_val, y_val),
+                early_stopping_rounds=self.early_stopping_rounds,
+                verbose=False,
+                **kwargs,
+            )
+        return super().fit(X, y, verbose=False, **kwargs)
+
+
+# ======================================================
+# Search Factory Helper (Successive Halving vs Random)
+# ======================================================
+
+def _create_search_cv(
+    estimator: Any,
+    param_distributions: Dict[str, Any],
+    n_iter: int,
+    cv: TimeSeriesSplit,
+    config: TrainingConfig,
+    n_jobs: int = -1,
+) -> Any:
+    """Instantiates HalvingRandomSearchCV or standard RandomizedSearchCV based on config."""
+    if getattr(config, "use_halving_search", True):
+        from sklearn.experimental import enable_halving_search_cv  # noqa: F401
+        from sklearn.model_selection import HalvingRandomSearchCV
+
+        return HalvingRandomSearchCV(
+            estimator=estimator,
+            param_distributions=param_distributions,
+            cv=cv,
+            scoring="neg_log_loss",
+            random_state=config.random_seed,
+            n_candidates=n_iter,
+            min_resources="exhaust",
+            factor=getattr(config, "halving_factor", 2),
+            n_jobs=n_jobs,
+        )
+
+    return RandomizedSearchCV(
+        estimator=estimator,
+        param_distributions=param_distributions,
+        n_iter=n_iter,
+        cv=cv,
+        scoring="neg_log_loss",
+        random_state=config.random_seed,
+        n_jobs=n_jobs,
+    )
+
+
+# ======================================================
 # Architecture-Specific Tuning Functions
 # ======================================================
 
@@ -60,10 +177,11 @@ def tune_mlp(
     y_train: Any,
     config: TrainingConfig,
     tscv: TimeSeriesSplit,
-) -> RandomizedSearchCV:
+) -> Any:
     """
     Tunes Multi-Layer Perceptron hyperparameters over the configured parameter distributions.
-    Early stopping on training validation slices prevents overfitting.
+    Evaluates architectures on the full sample split with validation-based early stopping
+    to preserve deep multi-layer representation learning.
     """
     search = RandomizedSearchCV(
         estimator=MLPClassifier(
@@ -90,13 +208,15 @@ def tune_xgboost(
     y_train: Any,
     config: TrainingConfig,
     tscv: TimeSeriesSplit,
-) -> RandomizedSearchCV:
+) -> Any:
     """
-    Tunes XGBoost gradient boosted trees with histogram-based binning.
+    Tunes XGBoost gradient boosted trees with early stopping and histogram binning.
     Uses log-loss objective to penalize inaccurate probability distributions.
     """
-    search = RandomizedSearchCV(
-        estimator=XGBClassifier(
+    search = _create_search_cv(
+        estimator=EarlyStoppingXGBClassifier(
+            early_stopping_rounds=getattr(config, "early_stopping_rounds", 25),
+            val_fraction=getattr(config, "early_stopping_val_fraction", 0.1),
             random_state=config.random_seed,
             eval_metric="logloss",
             tree_method="hist",
@@ -105,8 +225,7 @@ def tune_xgboost(
         param_distributions=config.xgb_grid,
         n_iter=config.xgb_search_iterations,
         cv=tscv,
-        scoring="neg_log_loss",
-        random_state=config.random_seed,
+        config=config,
         n_jobs=-1,
     )
     search.fit(X_train, y_train)
@@ -119,13 +238,15 @@ def tune_catboost(
     y_train: Any,
     config: TrainingConfig,
     tscv: TimeSeriesSplit,
-) -> RandomizedSearchCV:
+) -> Any:
     """
-    Tunes CatBoost gradient boosted trees with symmetric oblivious splits.
+    Tunes CatBoost gradient boosted trees with early stopping and symmetric oblivious splits.
     Uses log-loss objective to optimize predictive probability distributions.
     """
-    search = RandomizedSearchCV(
-        estimator=CatBoostClassifier(
+    search = _create_search_cv(
+        estimator=EarlyStoppingCatBoostClassifier(
+            early_stopping_rounds=getattr(config, "early_stopping_rounds", 25),
+            val_fraction=getattr(config, "early_stopping_val_fraction", 0.1),
             random_seed=config.random_seed,
             eval_metric="Logloss",
             thread_count=-1,
@@ -134,8 +255,7 @@ def tune_catboost(
         param_distributions=config.catboost_grid,
         n_iter=config.catboost_search_iterations,
         cv=tscv,
-        scoring="neg_log_loss",
-        random_state=config.random_seed,
+        config=config,
         n_jobs=1,
     )
     search.fit(X_train, y_train)
@@ -175,12 +295,13 @@ def calibrate_best_models(
     mlp_estimator: Any,
     xgb_estimator: Any,
     catboost_estimator: Any,
-    lr_estimator: Any,
+    lr_estimator: Optional[Any],
     data: TrainingData,
     tscv: TimeSeriesSplit,
+    config: Optional[TrainingConfig] = None,
 ) -> Tuple[Any, Any, Any, Any, Dict[str, Any]]:
     """
-    Fits cross-validated probability calibration across all base models.
+    Fits cross-validated probability calibration across available base models.
     Performs model selection between Platt Scaling and Beta Calibration for each model.
     """
     logger.info("      [Calibration] Evaluating Platt vs Beta calibration for MLP...")
@@ -198,17 +319,22 @@ def calibrate_best_models(
         catboost_estimator, data.catboost.X_train, data.y_train, tscv
     )
 
-    logger.info("      [Calibration] Evaluating Platt vs Beta calibration for Logistic Regression...")
-    lr_cal, lr_meta = calibrate_estimator_with_model_selection(
-        lr_estimator, data.lr.X_train_processed, data.y_train, tscv
-    )
+    lr_cal = None
+    lr_meta = {"method": "none", "selected_log_loss": None}
+    if lr_estimator is not None and getattr(config, "include_logistic_regression", False):
+        logger.info("      [Calibration] Evaluating Platt vs Beta calibration for Logistic Regression...")
+        lr_cal, lr_meta = calibrate_estimator_with_model_selection(
+            lr_estimator, data.lr.X_train_processed, data.y_train, tscv
+        )
 
     calibration_report = {
         "MLP": mlp_meta,
         "XGBoost": xgb_meta,
         "CatBoost": cb_meta,
-        "Logistic_Regression": lr_meta,
     }
+    if lr_cal is not None:
+        calibration_report["Logistic_Regression"] = lr_meta
+
     return mlp_cal, xgb_cal, cb_cal, lr_cal, calibration_report
 
 
@@ -217,10 +343,10 @@ def calibrate_best_models(
 # ======================================================
 
 def save_tuning_results(
-    mlp_search: RandomizedSearchCV,
-    xgb_search: RandomizedSearchCV,
-    catboost_search: RandomizedSearchCV,
-    lr_search: GridSearchCV,
+    mlp_search: Any,
+    xgb_search: Any,
+    catboost_search: Any,
+    lr_search: Optional[Any],
     calibration_report: Dict[str, Any],
     output_dir: Path,
 ) -> None:
@@ -228,13 +354,15 @@ def save_tuning_results(
     save_json(mlp_search.best_params_, output_dir / MLP_PARAMS_FILE)
     save_json(xgb_search.best_params_, output_dir / XGB_PARAMS_FILE)
     save_json(catboost_search.best_params_, output_dir / CATBOOST_PARAMS_FILE)
-    save_json(lr_search.best_params_, output_dir / LR_PARAMS_FILE)
+    if lr_search is not None:
+        save_json(lr_search.best_params_, output_dir / LR_PARAMS_FILE)
     save_json(calibration_report, output_dir / CALIBRATION_REPORT_FILE)
 
     pd.DataFrame(mlp_search.cv_results_).to_csv(output_dir / MLP_RESULTS_FILE, index=False)
     pd.DataFrame(xgb_search.cv_results_).to_csv(output_dir / XGB_RESULTS_FILE, index=False)
     pd.DataFrame(catboost_search.cv_results_).to_csv(output_dir / CATBOOST_RESULTS_FILE, index=False)
-    pd.DataFrame(lr_search.cv_results_).to_csv(output_dir / LR_RESULTS_FILE, index=False)
+    if lr_search is not None:
+        pd.DataFrame(lr_search.cv_results_).to_csv(output_dir / LR_RESULTS_FILE, index=False)
 
 
 def tune_base_models(
@@ -243,8 +371,8 @@ def tune_base_models(
     output_dir: Path,
 ) -> Tuple[ModelArtifacts, ModelArtifacts, ModelArtifacts, ModelArtifacts]:
     """
-    Orchestrates hyperparameter tuning and calibration for all four base classifiers:
-    MLP, XGBoost, CatBoost, and Logistic Regression.
+    Orchestrates hyperparameter tuning and calibration across base classifiers.
+    If include_logistic_regression is False, skips LR to accelerate training.
 
     Returns:
         Tuple of (mlp_artifacts, xgb_artifacts, catboost_artifacts, lr_artifacts)
@@ -255,16 +383,22 @@ def tune_base_models(
     mlp_search = tune_mlp(data.mlp.X_train_processed, data.y_train, config, tscv)
     xgb_search = tune_xgboost(data.xgb.X_train, data.y_train, config, tscv)
     catboost_search = tune_catboost(data.catboost.X_train, data.y_train, config, tscv)
-    lr_search = tune_logistic_regression(data.lr.X_train_processed, data.y_train, config, tscv)
+
+    lr_search = None
+    if getattr(config, "include_logistic_regression", False):
+        lr_search = tune_logistic_regression(data.lr.X_train_processed, data.y_train, config, tscv)
+    else:
+        logger.info("      [Pruning] Binary Logistic Regression is disabled (0.00% ensemble contribution).")
 
     logger.info("      Applying leak-free calibration model selection (Platt vs. Beta)...")
     mlp_cal, xgb_cal, cb_cal, lr_cal, cal_report = calibrate_best_models(
-        mlp_search.best_estimator_,
-        xgb_search.best_estimator_,
-        catboost_search.best_estimator_,
-        lr_search.best_estimator_,
-        data,
-        tscv,
+        mlp_estimator=mlp_search.best_estimator_,
+        xgb_estimator=xgb_search.best_estimator_,
+        catboost_estimator=catboost_search.best_estimator_,
+        lr_estimator=lr_search.best_estimator_ if lr_search is not None else None,
+        data=data,
+        tscv=tscv,
+        config=config,
     )
 
     save_tuning_results(mlp_search, xgb_search, catboost_search, lr_search, cal_report, output_dir)

@@ -58,9 +58,10 @@ def _extract_validation_probabilities(
         columns.append(cb_probs)
         names.append("CatBoost")
 
-    lr_probs = lr.model.predict_proba(lr.feature_set.X_val_processed)[:, 1]
-    columns.append(lr_probs)
-    names.append("Logistic Regression")
+    if lr is not None and lr.model is not None and lr.feature_set is not None and lr.feature_set.X_val_processed is not None:
+        lr_probs = lr.model.predict_proba(lr.feature_set.X_val_processed)[:, 1]
+        columns.append(lr_probs)
+        names.append("Logistic Regression")
 
     if margin is not None and margin.model is not None:
         reg_type = getattr(getattr(margin.model, "regressor", margin.model), "model_type", "ridge")
@@ -133,8 +134,8 @@ def _optimize_weights_slsqp(
 def learn_ensemble_weights(
     mlp: ModelArtifacts,
     xgb: ModelArtifacts,
-    lr: ModelArtifacts,
-    y_val: pd.Series,
+    lr: Optional[ModelArtifacts] = None,
+    y_val: pd.Series = None,
     catboost: Optional[ModelArtifacts] = None,
     margin: Optional[ModelArtifacts] = None,
 ) -> Tuple[np.ndarray, Dict[str, float]]:

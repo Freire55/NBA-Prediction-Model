@@ -150,13 +150,21 @@ def retrain_on_full_data(artifacts: TrainingArtifacts) -> None:
     mlp_scaler, mlp_train_scaled, mlp_test_scaled = _fit_and_apply_scaler(
         mlp_train_full, data.mlp.X_test
     )
-    lr_scaler, lr_train_scaled, lr_test_scaled = _fit_and_apply_scaler(
-        lr_train_full, data.lr.X_test
-    )
 
-    _export_scaler_statistics(
-        lr_scaler, lr_train_full.columns, artifacts.output_dir / SCALER_STATS_FILE
-    )
+    if artifacts.lr.model is not None and data.lr is not None:
+        lr_scaler, lr_train_scaled, lr_test_scaled = _fit_and_apply_scaler(
+            lr_train_full, data.lr.X_test
+        )
+        _export_scaler_statistics(
+            lr_scaler, lr_train_full.columns, artifacts.output_dir / SCALER_STATS_FILE
+        )
+        artifacts.lr.final_model = _retrain_classifier(
+            artifacts.lr.model, lr_train_scaled, y_train_full
+        )
+        artifacts.lr.feature_set.scaler = lr_scaler
+        artifacts.lr.feature_set.X_train_full = lr_train_full
+        artifacts.lr.feature_set.X_train_full_processed = lr_train_scaled
+        artifacts.lr.feature_set.X_test_processed = lr_test_scaled
 
     # Retrain binary base classifiers
     artifacts.mlp.final_model = _retrain_classifier(
@@ -164,9 +172,6 @@ def retrain_on_full_data(artifacts: TrainingArtifacts) -> None:
     )
     artifacts.xgb.final_model = _retrain_classifier(
         artifacts.xgb.model, xgb_train_full, y_train_full
-    )
-    artifacts.lr.final_model = _retrain_classifier(
-        artifacts.lr.model, lr_train_scaled, y_train_full
     )
 
     if artifacts.catboost.model is not None and data.catboost is not None:
@@ -183,11 +188,6 @@ def retrain_on_full_data(artifacts: TrainingArtifacts) -> None:
     artifacts.mlp.feature_set.X_test_processed = mlp_test_scaled
 
     artifacts.xgb.feature_set.X_train_full = xgb_train_full
-
-    artifacts.lr.feature_set.scaler = lr_scaler
-    artifacts.lr.feature_set.X_train_full = lr_train_full
-    artifacts.lr.feature_set.X_train_full_processed = lr_train_scaled
-    artifacts.lr.feature_set.X_test_processed = lr_test_scaled
 
     # Retrain margin regressor and pace converter if present
     _retrain_margin_pipeline(artifacts)

@@ -94,3 +94,34 @@ def test_5_model_ensemble_weights_simplex():
     assert np.isclose(np.sum(weights), 1.0)
     assert np.all(weights >= 0.0)
     assert set(formula.keys()) == {"MLP", "XGBoost", "CatBoost", "Logistic Regression", "Pace Margin (CDF)"}
+
+
+def test_4_model_ensemble_weights_simplex_without_lr():
+    """Verifies that the SLSQP optimizer learns valid simplex weights when LR is retired."""
+    mlp_mock = MockCalibratedModel([0.80, 0.20, 0.70])
+    xgb_mock = MockCalibratedModel([0.75, 0.25, 0.65])
+    cb_mock = MockCalibratedModel([0.85, 0.15, 0.75])
+    margin_mock = MockCalibratedModel([0.90, 0.10, 0.85])
+
+    dummy_val = pd.DataFrame(np.zeros((3, 4)))
+    dummy_proc = np.zeros((3, 4))
+    y_val = pd.Series([1, 0, 1])
+
+    mlp_art = ModelArtifacts(model=mlp_mock, feature_set=FeatureSet(None, None, None, X_val_processed=dummy_proc))
+    xgb_art = ModelArtifacts(model=xgb_mock, feature_set=FeatureSet(None, dummy_val, None))
+    cb_art = ModelArtifacts(model=cb_mock, feature_set=FeatureSet(None, dummy_val, None))
+    margin_art = ModelArtifacts(model=margin_mock, feature_set=FeatureSet(None, dummy_val, None))
+
+    weights, formula = learn_ensemble_weights(
+        mlp=mlp_art,
+        xgb=xgb_art,
+        lr=None,
+        y_val=y_val,
+        catboost=cb_art,
+        margin=margin_art,
+    )
+
+    assert len(weights) == 4
+    assert np.isclose(np.sum(weights), 1.0)
+    assert np.all(weights >= 0.0)
+    assert set(formula.keys()) == {"MLP", "XGBoost", "CatBoost", "Pace Margin (CDF)"}

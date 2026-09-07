@@ -254,6 +254,16 @@ class TrainingConfig:
     cv_folds: int = 5
 
     # ======================================================
+    # Speed & Architecture Optimizations
+    # ======================================================
+
+    include_logistic_regression: bool = False
+    use_halving_search: bool = True
+    halving_factor: int = 2
+    early_stopping_rounds: int = 25
+    early_stopping_val_fraction: float = 0.1
+
+    # ======================================================
     # Explainability & Evaluation
     # ======================================================
 
@@ -277,9 +287,6 @@ class TrainingConfig:
     mlp_grid: dict[str, Any] = field(
         default_factory=lambda: {
             "hidden_layer_sizes": [
-                (64,),
-                (128,),
-                (64, 32),
                 (128, 64),
                 (128, 64, 32),
                 (256, 128, 64),
@@ -344,6 +351,12 @@ class TrainingConfig:
         env_override = os.environ.get("USE_OPTIMIZED_FEATURES")
         if env_override is not None:
             self.prune_optimized_features = (env_override == "1")
+
+        if os.environ.get("USE_LOGISTIC_REGRESSION") is not None:
+            self.include_logistic_regression = (os.environ.get("USE_LOGISTIC_REGRESSION") == "1")
+
+        if os.environ.get("USE_HALVING_SEARCH") is not None:
+            self.use_halving_search = (os.environ.get("USE_HALVING_SEARCH") == "1")
 
         # CatBoost inherits tree feature removals by default
         if "catboost" not in self.features_to_remove:

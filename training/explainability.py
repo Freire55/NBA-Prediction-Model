@@ -290,7 +290,11 @@ def generate_explanations(
     mlp_importance = generate_mlp_importance(artifacts)
     xgb_importance = generate_xgb_importance(artifacts)
     catboost_importance = generate_catboost_importance(artifacts)
-    lr_coefficients = generate_lr_coefficients(artifacts)
+    lr_coefficients = (
+        generate_lr_coefficients(artifacts)
+        if artifacts.lr.final_model is not None and artifacts.lr.feature_set is not None
+        else None
+    )
     margin_importance = generate_margin_importance(artifacts)
 
     combined = (
@@ -310,13 +314,14 @@ def generate_explanations(
             how="outer",
         )
 
-    combined = combined.merge(
-        lr_coefficients[["Feature", "Abs_Weight"]].rename(
-            columns={"Abs_Weight": "Logistic_Regression"}
-        ),
-        on="Feature",
-        how="outer",
-    )
+    if lr_coefficients is not None:
+        combined = combined.merge(
+            lr_coefficients[["Feature", "Abs_Weight"]].rename(
+                columns={"Abs_Weight": "Logistic_Regression"}
+            ),
+            on="Feature",
+            how="outer",
+        )
 
     if margin_importance is not None:
         val_col = "Abs_Weight" if "Abs_Weight" in margin_importance.columns else "Importance"

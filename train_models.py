@@ -187,7 +187,8 @@ def run_stage_data_prep(artifacts: TrainingArtifacts, data_dir: Path, config: Tr
     with PipelineStage(1, TOTAL_PIPELINE_STAGES, "Data preparation & scaling"):
         artifacts.data = load_and_prep_data(data_dir, config)
         scale_features(artifacts.data.mlp)
-        scale_features(artifacts.data.lr)
+        if getattr(config, "include_logistic_regression", False):
+            scale_features(artifacts.data.lr)
         if artifacts.data.margin is not None:
             scale_features(artifacts.data.margin)
 

@@ -6,7 +6,7 @@
         64,
         32
     ],
-    "batch_size": 128,
+    "batch_size": 64,
     "alpha": 0.01,
     "activation": "tanh"
 }

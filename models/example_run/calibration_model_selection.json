@@ -1,48 +1,37 @@
 {
     "MLP": {
         "method": "platt",
-        "raw_log_loss": 0.6025,
-        "platt_log_loss": 0.6023,
-        "beta_log_loss": 0.6022,
-        "selected_log_loss": 0.6023,
+        "raw_log_loss": 0.6042,
+        "platt_log_loss": 0.6031,
+        "beta_log_loss": 0.603,
+        "selected_log_loss": 0.6031,
         "params": {
-            "a": 0.9428,
-            "c": -0.0034
+            "a": 0.8803,
+            "c": 0.0252
         }
     },
     "XGBoost": {
         "method": "beta",
-        "raw_log_loss": 0.5911,
-        "platt_log_loss": 0.59,
-        "beta_log_loss": 0.5896,
-        "selected_log_loss": 0.5896,
+        "raw_log_loss": 0.5934,
+        "platt_log_loss": 0.5921,
+        "beta_log_loss": 0.5917,
+        "selected_log_loss": 0.5917,
         "params": {
-            "a": 0.6128,
-            "b": 1.3816,
-            "c": -0.6867
+            "a": 0.5505,
+            "b": 1.4724,
+            "c": -0.8017
         }
     },
     "CatBoost": {
         "method": "beta",
-        "raw_log_loss": 0.5902,
-        "platt_log_loss": 0.5892,
-        "beta_log_loss": 0.5889,
-        "selected_log_loss": 0.5889,
+        "raw_log_loss": 0.592,
+        "platt_log_loss": 0.5908,
+        "beta_log_loss": 0.5905,
+        "selected_log_loss": 0.5905,
         "params": {
-            "a": 0.6315,
-            "b": 1.3315,
-            "c": -0.6278
-        }
-    },
-    "Logistic_Regression": {
-        "method": "platt",
-        "raw_log_loss": 0.5978,
-        "platt_log_loss": 0.5975,
-        "beta_log_loss": 0.5975,
-        "selected_log_loss": 0.5975,
-        "params": {
-            "a": 0.9714,
-            "c": -0.0314
+            "a": 0.6817,
+            "b": 1.38,
+            "c": -0.6349
         }
     }
 }

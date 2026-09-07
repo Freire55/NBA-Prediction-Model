@@ -86,6 +86,11 @@
     },
     "random_seed": 42,
     "cv_folds": 5,
+    "include_logistic_regression": false,
+    "use_halving_search": true,
+    "halving_factor": 2,
+    "early_stopping_rounds": 25,
+    "early_stopping_val_fraction": 0.1,
     "n_shap_samples": 1000,
     "permutation_repeats": 20,
     "calibration_bins": 10,
@@ -95,16 +100,6 @@
     "margin_search_iterations": 15,
     "mlp_grid": {
         "hidden_layer_sizes": [
-            [
-                64
-            ],
-            [
-                128
-            ],
-            [
-                64,
-                32
-            ],
             [
                 128,
                 64

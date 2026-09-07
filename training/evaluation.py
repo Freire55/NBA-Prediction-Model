@@ -112,10 +112,6 @@ def _collect_test_probabilities(
         artifacts.xgb.feature_set.X_test
     )[:, 1]
 
-    lr_probs = artifacts.lr.final_model.predict_proba(
-        artifacts.lr.feature_set.X_test_processed
-    )[:, 1]
-
     probs_dict = {
         "MLP": mlp_probs,
         "XGBoost": xgb_probs,
@@ -128,7 +124,16 @@ def _collect_test_probabilities(
         )[:, 1]
         probs_dict["CatBoost"] = cb_probs
 
-    probs_dict["Logistic Regression"] = lr_probs
+    # Logistic Regression Model
+    if (
+        artifacts.lr.final_model is not None
+        and artifacts.lr.feature_set is not None
+        and artifacts.lr.feature_set.X_test_processed is not None
+    ):
+        lr_probs = artifacts.lr.final_model.predict_proba(
+            artifacts.lr.feature_set.X_test_processed
+        )[:, 1]
+        probs_dict["Logistic Regression"] = lr_probs
 
     # Margin Model
     margin_probs = _extract_margin_test_probabilities(artifacts)
