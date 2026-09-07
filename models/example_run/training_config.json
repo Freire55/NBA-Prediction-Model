@@ -1,6 +1,8 @@
 {
     "train_end": "22018",
     "validation_end": "22020",
+    "use_recency_weights": true,
+    "recency_half_life_years": 7.0,
     "lr_prefixes": [
         "DELTA_"
     ],
@@ -37,7 +39,6 @@
             "EMBED_DELTA_1_MAX"
         ],
         "lr": [
-            "DELTA_Z_FG3A_EWMA_3",
             "DELTA_Z_FG3A_EWMA_5",
             "DELTA_SOS_ROLLING_8",
             "DELTA_ACTIVE_ROSTER_EXPECTED_FTR",
@@ -46,7 +47,9 @@
     },
     "features_to_remove": {
         "mlp": [
-            "DELTA_ROLLING_PACE"
+            "DELTA_ROLLING_PACE",
+            "DELTA_Z_FTA_ROLLING_8",
+            "DELTA_Z_FGM_ROLLING_8"
         ],
         "xgb": [
             "HOME_IS_AWAY",
@@ -60,11 +63,12 @@
             "AWAY_SEASON_YEAR",
             "HOME_ROLLING_PACE",
             "AWAY_ROLLING_PACE",
+            "HOME_ROAD_TRIP_LENGTH",
+            "HOME_4_IN_5",
             "EMBED_DELTA_1_MAX"
         ],
         "lr": [
             "DELTA_ROLLING_PACE",
-            "DELTA_Z_FG3A_EWMA_3",
             "DELTA_Z_FG3A_EWMA_5",
             "DELTA_SOS_ROLLING_8",
             "DELTA_ACTIVE_ROSTER_EXPECTED_FTR",
@@ -81,7 +85,9 @@
             "HOME_SEASON_YEAR",
             "AWAY_SEASON_YEAR",
             "HOME_ROLLING_PACE",
-            "AWAY_ROLLING_PACE"
+            "AWAY_ROLLING_PACE",
+            "HOME_ROAD_TRIP_LENGTH",
+            "HOME_4_IN_5"
         ]
     },
     "random_seed": 42,
@@ -194,6 +200,7 @@
         ]
     },
     "margin_model_type": "ridge",
+    "margin_bivariate_efficiency": true,
     "margin_ridge_grid": {
         "alpha": [
             0.01,
