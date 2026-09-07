@@ -13,6 +13,11 @@
         "DELTA_",
         "EMBED_"
     ],
+    "catboost_prefixes": [
+        "HOME_",
+        "AWAY_",
+        "EMBED_"
+    ],
     "margin_prefixes": [
         "DELTA_"
     ],
@@ -64,6 +69,19 @@
             "DELTA_SOS_ROLLING_8",
             "DELTA_ACTIVE_ROSTER_EXPECTED_FTR",
             "HOME_B2B"
+        ],
+        "catboost": [
+            "HOME_IS_AWAY",
+            "AWAY_IS_AWAY",
+            "HOME_VIDEO_AVAILABLE",
+            "AWAY_VIDEO_AVAILABLE",
+            "HOME_AWAY_GROUP",
+            "AWAY_AWAY_GROUP",
+            "AWAY_SEASON_ID",
+            "HOME_SEASON_YEAR",
+            "AWAY_SEASON_YEAR",
+            "HOME_ROLLING_PACE",
+            "AWAY_ROLLING_PACE"
         ]
     },
     "random_seed": 42,
@@ -222,5 +240,24 @@
             0.8,
             1.0
         ]
-    }
+    },
+    "catboost_grid": {
+        "depth": [
+            4,
+            6
+        ],
+        "l2_leaf_reg": [
+            1,
+            5,
+            10
+        ],
+        "learning_rate": [
+            0.03,
+            0.07
+        ],
+        "iterations": [
+            350
+        ]
+    },
+    "catboost_search_iterations": 4
 }
