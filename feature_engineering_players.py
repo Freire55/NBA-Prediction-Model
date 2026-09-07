@@ -297,23 +297,14 @@ def compute_player_rolling_metrics(logs_df: pd.DataFrame) -> pd.DataFrame:
     player_groups = logs_df.groupby("PLAYER_ID")
 
     logs_df = logs_df.assign(
-        PLAYER_FORM_ROLLING_3=player_groups["GAME_SCORE"].transform(rolling_mean, rolling_window=3),
         PLAYER_FORM_ROLLING_5=player_groups["GAME_SCORE"].transform(rolling_mean, rolling_window=5),
         PLAYER_FORM_ROLLING_10=player_groups["GAME_SCORE"].transform(rolling_mean, rolling_window=10),
-
-        PLAYER_OBPM_ROLLING_3=player_groups["OBPM_PROXY"].transform(rolling_mean, rolling_window=3).fillna(0.0),
-        PLAYER_DBPM_ROLLING_3=player_groups["DBPM_PROXY"].transform(rolling_mean, rolling_window=3).fillna(0.0),
 
         PLAYER_OBPM_ROLLING_5=player_groups["OBPM_PROXY"].transform(rolling_mean, rolling_window=5).fillna(0.0),
         PLAYER_DBPM_ROLLING_5=player_groups["DBPM_PROXY"].transform(rolling_mean, rolling_window=5).fillna(0.0),
 
         PLAYER_OBPM_ROLLING_10=player_groups["OBPM_PROXY"].transform(rolling_mean, rolling_window=10).fillna(0.0),
         PLAYER_DBPM_ROLLING_10=player_groups["DBPM_PROXY"].transform(rolling_mean, rolling_window=10).fillna(0.0),
-
-        PLAYER_FOUR_FACTOR_EFG_ROLLING_3=player_groups["PLAYER_FOUR_FACTOR_EFG"].transform(rolling_mean, rolling_window=3).fillna(0.50),
-        PLAYER_FOUR_FACTOR_TOV_ROLLING_3=player_groups["PLAYER_FOUR_FACTOR_TOV"].transform(rolling_mean, rolling_window=3).fillna(0.12),
-        PLAYER_FOUR_FACTOR_OREB_ROLLING_3=player_groups["PLAYER_FOUR_FACTOR_OREB"].transform(rolling_mean, rolling_window=3).fillna(0.03),
-        PLAYER_FOUR_FACTOR_FTR_ROLLING_3=player_groups["PLAYER_FOUR_FACTOR_FTR"].transform(rolling_mean, rolling_window=3).fillna(0.25),
 
         PLAYER_FOUR_FACTOR_EFG_ROLLING_5=player_groups["PLAYER_FOUR_FACTOR_EFG"].transform(rolling_mean, rolling_window=5).fillna(0.50),
         PLAYER_FOUR_FACTOR_TOV_ROLLING_5=player_groups["PLAYER_FOUR_FACTOR_TOV"].transform(rolling_mean, rolling_window=5).fillna(0.12),
@@ -329,14 +320,13 @@ def compute_player_rolling_metrics(logs_df: pd.DataFrame) -> pd.DataFrame:
         PLAYER_FG3M_ROLLING_5=player_groups["FG3M"].transform(rolling_mean, rolling_window=5).fillna(0.0),
         PLAYER_AST_ROLLING_5=player_groups["AST"].transform(rolling_mean, rolling_window=5).fillna(0.0),
 
-        FATIGUE_EWMA_MINUTES_3=player_groups["MINUTES_NUM"].transform(lambda x: ewma(x, span=3)),
         FATIGUE_EWMA_MINUTES_5=player_groups["MINUTES_NUM"].transform(lambda x: ewma(x, span=5)),
         FATIGUE_EWMA_MINUTES_10=player_groups["MINUTES_NUM"].transform(lambda x: ewma(x, span=10)),
     )
 
     # Acute vs Chronic fatigue surge (short-term minutes spike over baseline)
     logs_df["FATIGUE_SURGE"] = (
-        logs_df["FATIGUE_EWMA_MINUTES_3"] - logs_df["FATIGUE_EWMA_MINUTES_10"]
+        logs_df["FATIGUE_EWMA_MINUTES_5"] - logs_df["FATIGUE_EWMA_MINUTES_10"]
     )
 
     logs_df = add_volatility_features(logs_df)
@@ -375,19 +365,12 @@ def compute_player_expected_impacts(
     )
 
     rolling_cols = [
-        "PLAYER_FORM_ROLLING_3",
         "PLAYER_FORM_ROLLING_5",
         "PLAYER_FORM_ROLLING_10",
-        "PLAYER_OBPM_ROLLING_3",
-        "PLAYER_DBPM_ROLLING_3",
         "PLAYER_OBPM_ROLLING_5",
         "PLAYER_DBPM_ROLLING_5",
         "PLAYER_OBPM_ROLLING_10",
         "PLAYER_DBPM_ROLLING_10",
-        "PLAYER_FOUR_FACTOR_EFG_ROLLING_3",
-        "PLAYER_FOUR_FACTOR_TOV_ROLLING_3",
-        "PLAYER_FOUR_FACTOR_OREB_ROLLING_3",
-        "PLAYER_FOUR_FACTOR_FTR_ROLLING_3",
         "PLAYER_FOUR_FACTOR_EFG_ROLLING_5",
         "PLAYER_FOUR_FACTOR_TOV_ROLLING_5",
         "PLAYER_FOUR_FACTOR_OREB_ROLLING_5",
@@ -403,7 +386,6 @@ def compute_player_expected_impacts(
         "EXPECTED_AST",
         "EXPECTED_OBPM",
         "EXPECTED_DBPM",
-        "FATIGUE_EWMA_MINUTES_3",
         "FATIGUE_EWMA_MINUTES_5",
         "FATIGUE_EWMA_MINUTES_10",
         "FATIGUE_SURGE",
@@ -437,9 +419,6 @@ def compute_player_expected_impacts(
     logs_df["TOP_3_IMPACT"] = np.where(logs_df["ROSTER_IMPACT_RANK"] <= 3, logs_df["POS_EXPECTED_IMPACT"], 0.0)
     logs_df["BENCH_IMPACT"] = np.where(logs_df["ROSTER_IMPACT_RANK"] > 3, logs_df["POS_EXPECTED_IMPACT"], 0.0)
 
-    logs_df["FATIGUE_IMPORTANCE_3"] = (
-        logs_df["PLAYER_FORM_ROLLING_3"] * logs_df["FATIGUE_EWMA_MINUTES_3"]
-    )
     logs_df["FATIGUE_IMPORTANCE_5"] = (
         logs_df["PLAYER_FORM_ROLLING_5"] * logs_df["FATIGUE_EWMA_MINUTES_5"]
     )
@@ -500,11 +479,6 @@ def build_active_roster_aggregations(logs_df: pd.DataFrame, embed_cols: list[str
         "FATIGUE_SURGE_SUM": ("FATIGUE_SURGE", "sum"),
         "FATIGUE_SURGE_MAX": ("FATIGUE_SURGE", "max"),
 
-        "FATIGUE_EWMA_MINUTES_3_SUM": ("FATIGUE_EWMA_MINUTES_3", "sum"),
-        "FATIGUE_EWMA_MINUTES_3_STD": ("FATIGUE_EWMA_MINUTES_3", "std"),
-        "FATIGUE_EWMA_MINUTES_3_MAX": ("FATIGUE_EWMA_MINUTES_3", "max"),
-        "FATIGUE_EWMA_MINUTES_3_MEAN": ("FATIGUE_EWMA_MINUTES_3", "mean"),
-
         "FATIGUE_EWMA_MINUTES_5_SUM": ("FATIGUE_EWMA_MINUTES_5", "sum"),
         "FATIGUE_EWMA_MINUTES_5_STD": ("FATIGUE_EWMA_MINUTES_5", "std"),
         "FATIGUE_EWMA_MINUTES_5_MAX": ("FATIGUE_EWMA_MINUTES_5", "max"),
@@ -514,10 +488,6 @@ def build_active_roster_aggregations(logs_df: pd.DataFrame, embed_cols: list[str
         "FATIGUE_EWMA_MINUTES_10_STD": ("FATIGUE_EWMA_MINUTES_10", "std"),
         "FATIGUE_EWMA_MINUTES_10_MAX": ("FATIGUE_EWMA_MINUTES_10", "max"),
         "FATIGUE_EWMA_MINUTES_10_MEAN": ("FATIGUE_EWMA_MINUTES_10", "mean"),
-
-        "FATIGUE_IMPORTANCE_3_SUM": ("FATIGUE_IMPORTANCE_3", "sum"),
-        "FATIGUE_IMPORTANCE_3_STD": ("FATIGUE_IMPORTANCE_3", "std"),
-        "FATIGUE_IMPORTANCE_3_MAX": ("FATIGUE_IMPORTANCE_3", "max"),
 
         "FATIGUE_IMPORTANCE_5_SUM": ("FATIGUE_IMPORTANCE_5", "sum"),
         "FATIGUE_IMPORTANCE_5_STD": ("FATIGUE_IMPORTANCE_5", "std"),
@@ -544,7 +514,6 @@ def build_active_roster_aggregations(logs_df: pd.DataFrame, embed_cols: list[str
     roster_agg["ACTIVE_ROSTER_FORM_STD"] = roster_agg["ACTIVE_ROSTER_FORM_STD"].fillna(DEFAULT_VALUE)
 
     fatigue_cols = [
-        "FATIGUE_IMPORTANCE_3_STD",
         "FATIGUE_IMPORTANCE_5_STD",
         "FATIGUE_IMPORTANCE_10_STD",
     ]
@@ -773,7 +742,7 @@ def compute_roster_matchup_deltas(matchups_df: pd.DataFrame) -> pd.DataFrame:
     )
 
     # Multi-horizon fatigue metrics
-    for span in [3, 5, 10]:
+    for span in [5, 10]:
         matchups_df[f"DELTA_FATIGUE_EWMA_MINUTES_{span}_SUM"] = (
             matchups_df[f"HOME_FATIGUE_EWMA_MINUTES_{span}_SUM"] - matchups_df[f"AWAY_FATIGUE_EWMA_MINUTES_{span}_SUM"]
         )

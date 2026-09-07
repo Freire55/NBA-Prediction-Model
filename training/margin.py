@@ -153,6 +153,9 @@ class MarginRegressor(BaseEstimator, RegressorMixin):
         catboost_params: Optional[Dict[str, Any]] = None,
         scaler: Optional[StandardScaler] = None,
         random_state: int = 42,
+        bivariate_efficiency: bool = False,
+        pace_col: str = PACE_COLUMN_NAME,
+        base_pace: float = DEFAULT_BASE_PACE,
     ) -> None:
         self.model_type = model_type
         self.alpha = alpha
@@ -160,12 +163,29 @@ class MarginRegressor(BaseEstimator, RegressorMixin):
         self.catboost_params = catboost_params or {}
         self.scaler = scaler
         self.random_state = random_state
+        self.bivariate_efficiency = bivariate_efficiency
+        self.pace_col = pace_col
+        self.base_pace = base_pace
 
         self.estimator_: Optional[BaseEstimator] = None
         self.residual_mean_: float = 0.0
         self.residual_std_: float = 13.5
         self.feature_names_: List[str] = []
         self.is_fitted_: bool = False
+
+    def _extract_pace(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        pace: Optional[Union[pd.Series, np.ndarray]] = None,
+    ) -> np.ndarray:
+        """Extracts expected matchup pace vector, falling back to base pace."""
+        if pace is not None:
+            return np.asarray(pace, dtype=np.float32)
+        if isinstance(X, pd.DataFrame) and self.pace_col in X.columns:
+            vals = X[self.pace_col].to_numpy(dtype=np.float32)
+            if np.nanmean(vals) > 50.0:
+                return np.nan_to_num(vals, nan=self.base_pace)
+        return np.full(len(X), self.base_pace, dtype=np.float32)
 
     def _build_estimator(self) -> BaseEstimator:
         """Instantiates the underlying regression algorithm."""
@@ -211,17 +231,13 @@ class MarginRegressor(BaseEstimator, RegressorMixin):
         X: Union[pd.DataFrame, np.ndarray],
         y: Union[pd.Series, np.ndarray],
         feature_names: Optional[List[str]] = None,
+        sample_weight: Optional[np.ndarray] = None,
+        pace: Optional[Union[pd.Series, np.ndarray]] = None,
     ) -> "MarginRegressor":
         """
-        Fits the continuous point differential regressor and computes residual standard error.
-
-        Args:
-            X: Training feature matrix (raw DataFrame or standardized array).
-            y: Continuous margin target series (HOME_PTS - AWAY_PTS).
-            feature_names: Optional column names for explainability.
-
-        Returns:
-            Fitted MarginRegressor instance.
+        Fits the point differential regressor and computes residual standard error.
+        Under bivariate efficiency mode, regresses on Net Rating differential
+        normalized per 100 possessions.
         """
         if isinstance(X, pd.DataFrame):
             self.feature_names_ = list(X.columns)
@@ -234,28 +250,39 @@ class MarginRegressor(BaseEstimator, RegressorMixin):
             X_arr = np.asarray(X, dtype=np.float32)
 
         y_arr = np.asarray(y, dtype=np.float32)
+        pace_vec = self._extract_pace(X, pace)
+
+        if self.bivariate_efficiency:
+            y_target = (y_arr / np.maximum(pace_vec, 50.0)) * 100.0
+        else:
+            y_target = y_arr
 
         self.estimator_ = self._build_estimator()
-        self.estimator_.fit(X_arr, y_arr)
+        if sample_weight is not None:
+            sw_arr = np.asarray(sample_weight, dtype=np.float32)
+            try:
+                self.estimator_.fit(X_arr, y_target, sample_weight=sw_arr)
+            except (TypeError, ValueError):
+                self.estimator_.fit(X_arr, y_target)
+        else:
+            self.estimator_.fit(X_arr, y_target)
 
-        preds = self.estimator_.predict(X_arr)
+        self.is_fitted_ = True
+        preds = self.predict(X, pace=pace_vec)
         residuals = y_arr - preds
 
         self.residual_mean_ = float(np.mean(residuals))
         self.residual_std_ = float(np.std(residuals))
-        self.is_fitted_ = True
-
         return self
 
-    def predict(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
+    def predict(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        pace: Optional[Union[pd.Series, np.ndarray]] = None,
+    ) -> np.ndarray:
         """
         Predicts expected game margin (HOME_PTS - AWAY_PTS).
-
-        Args:
-            X: Feature matrix.
-
-        Returns:
-            1D array of expected point differentials.
+        Scales predicted Net Rating by matchup possessions when in bivariate mode.
         """
         if not self.is_fitted_ or self.estimator_ is None:
             raise RuntimeError("MarginRegressor is not fitted yet. Call .fit() first.")
@@ -268,16 +295,21 @@ class MarginRegressor(BaseEstimator, RegressorMixin):
         else:
             X_arr = np.asarray(X, dtype=np.float32)
 
-        return self.estimator_.predict(X_arr)
+        raw_pred = self.estimator_.predict(X_arr)
+        if self.bivariate_efficiency:
+            pace_vec = self._extract_pace(X, pace)
+            return raw_pred * (pace_vec / 100.0)
+        return raw_pred
 
     def get_residuals(
         self,
         X: Union[pd.DataFrame, np.ndarray],
         y: Union[pd.Series, np.ndarray],
+        pace: Optional[Union[pd.Series, np.ndarray]] = None,
     ) -> np.ndarray:
         """Computes residuals (y_true - y_pred)."""
         y_arr = np.asarray(y, dtype=np.float32)
-        return y_arr - self.predict(X)
+        return y_arr - self.predict(X, pace=pace)
 
 
 # ======================================================
@@ -358,6 +390,7 @@ class PaceModulatedMarginClassifier(BaseEstimator, ClassifierMixin):
         y: Union[pd.Series, np.ndarray],
         y_margin: Optional[Union[pd.Series, np.ndarray]] = None,
         pace: Optional[Union[pd.Series, np.ndarray]] = None,
+        sample_weight: Optional[np.ndarray] = None,
     ) -> "PaceModulatedMarginClassifier":
         """
         Fits the underlying MarginRegressor (if needed) and calibrates sigma_0.
@@ -367,6 +400,7 @@ class PaceModulatedMarginClassifier(BaseEstimator, ClassifierMixin):
             y: Binary outcome (1 for home win, 0 for away win).
             y_margin: Optional continuous point differential target series.
             pace: Optional vector of expected game pace.
+            sample_weight: Optional array of sample weights.
 
         Returns:
             Fitted PaceModulatedMarginClassifier.
@@ -376,7 +410,7 @@ class PaceModulatedMarginClassifier(BaseEstimator, ClassifierMixin):
 
         if not getattr(self.regressor, "is_fitted_", False):
             target = y_margin if y_margin is not None else y
-            self.regressor.fit(X, target)
+            self.regressor.fit(X, target, sample_weight=sample_weight)
 
         # Determine initial sigma_0 baseline from regressor residuals
         initial_sigma = (
@@ -386,7 +420,7 @@ class PaceModulatedMarginClassifier(BaseEstimator, ClassifierMixin):
         )
 
         pace_vec = self._extract_pace(X, pace)
-        margins = self.regressor.predict(X)
+        margins = self.regressor.predict(X, pace=pace_vec)
         y_binary = np.asarray(y, dtype=np.int32)
 
         # Calibrate sigma_0 by minimizing cross-entropy (log-loss) if binary targets available
@@ -394,6 +428,8 @@ class PaceModulatedMarginClassifier(BaseEstimator, ClassifierMixin):
             def log_loss_objective(s: float) -> float:
                 sigmas = s * np.sqrt(pace_vec / self.base_pace)
                 probs = np.clip(ndtr(margins / sigmas), 1e-7, 1.0 - 1e-7)
+                if sample_weight is not None:
+                    return float(log_loss(y_binary, probs, sample_weight=sample_weight))
                 return float(log_loss(y_binary, probs))
 
             res = minimize_scalar(
@@ -408,11 +444,15 @@ class PaceModulatedMarginClassifier(BaseEstimator, ClassifierMixin):
         self.is_fitted_ = True
         return self
 
-    def predict_margin(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
+    def predict_margin(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        pace: Optional[Union[pd.Series, np.ndarray]] = None,
+    ) -> np.ndarray:
         """Returns predicted point differential M_hat."""
         if not self.is_fitted_ or self.regressor is None:
             raise RuntimeError("PaceModulatedMarginClassifier is not fitted yet.")
-        return self.regressor.predict(X)
+        return self.regressor.predict(X, pace=pace)
 
     def predict_proba(
         self,
@@ -429,8 +469,8 @@ class PaceModulatedMarginClassifier(BaseEstimator, ClassifierMixin):
         if not self.is_fitted_:
             raise RuntimeError("PaceModulatedMarginClassifier is not fitted yet.")
 
-        margins = self.predict_margin(X)
         pace_vec = self._extract_pace(X, pace)
+        margins = self.predict_margin(X, pace=pace_vec)
 
         # Tempo-modulated standard error
         game_sigmas = self.sigma_0_ * np.sqrt(pace_vec / self.base_pace)
@@ -464,6 +504,7 @@ def tune_margin_regressor(
     config: TrainingConfig,
     model_type: Optional[str] = None,
     output_dir: Optional[Path] = None,
+    sample_weight: Optional[np.ndarray] = None,
 ) -> Tuple[ModelArtifacts, Dict[str, float]]:
     """
     Performs chronological TimeSeriesSplit hyperparameter tuning for MarginRegressor.
@@ -473,6 +514,7 @@ def tune_margin_regressor(
         config: Training configuration specifying search spaces and splits.
         model_type: "ridge" or "xgb" (defaults to config.margin_model_type).
         output_dir: Optional path to save tuning metadata.
+        sample_weight: Optional sample weights (defaults to None for unweighted regression).
 
     Returns:
         Tuple containing:
@@ -492,12 +534,31 @@ def tune_margin_regressor(
         scale_features(data.margin)
 
     tscv = TimeSeriesSplit(n_splits=config.cv_folds)
+    sw = sample_weight
+    bivariate = getattr(config, "margin_bivariate_efficiency", True)
+
+    pace_train = (
+        data.margin.X_train["MATCHUP_EXPECTED_PACE"].to_numpy(dtype=np.float32)
+        if isinstance(data.margin.X_train, pd.DataFrame) and "MATCHUP_EXPECTED_PACE" in data.margin.X_train.columns
+        else None
+    )
+    pace_val = (
+        data.margin.X_val["MATCHUP_EXPECTED_PACE"].to_numpy(dtype=np.float32)
+        if isinstance(data.margin.X_val, pd.DataFrame) and "MATCHUP_EXPECTED_PACE" in data.margin.X_val.columns
+        else None
+    )
 
     if m_type == "ridge":
         X_train = data.margin.X_train_processed
         X_val = data.margin.X_val_processed
         y_train = data.y_margin_train.to_numpy(dtype=np.float32)
         y_val = data.y_margin_val.to_numpy(dtype=np.float32)
+
+        y_train_fit = (
+            (y_train / np.maximum(pace_train, 50.0)) * 100.0
+            if bivariate and pace_train is not None
+            else y_train
+        )
 
         grid = config.margin_ridge_grid
         search = GridSearchCV(
@@ -507,7 +568,10 @@ def tune_margin_regressor(
             scoring="neg_root_mean_squared_error",
             n_jobs=-1,
         )
-        search.fit(X_train, y_train)
+        if sw is not None:
+            search.fit(X_train, y_train_fit, sample_weight=sw)
+        else:
+            search.fit(X_train, y_train_fit)
 
         best_alpha = search.best_params_["alpha"]
         logger.info(
@@ -519,14 +583,21 @@ def tune_margin_regressor(
             alpha=best_alpha,
             scaler=data.margin.scaler,
             random_state=config.random_seed,
+            bivariate_efficiency=bivariate,
         )
-        regressor.fit(X_train, y_train, feature_names=data.margin.feature_names)
+        regressor.fit(X_train, y_train, feature_names=data.margin.feature_names, sample_weight=sw, pace=pace_train)
 
     elif m_type == "xgb":
         X_train = data.margin.X_train
         X_val = data.margin.X_val
-        y_train = data.y_margin_train
-        y_val = data.y_margin_val
+        y_train = data.y_margin_train.to_numpy(dtype=np.float32)
+        y_val = data.y_margin_val.to_numpy(dtype=np.float32)
+
+        y_train_fit = (
+            (y_train / np.maximum(pace_train, 50.0)) * 100.0
+            if bivariate and pace_train is not None
+            else y_train
+        )
 
         grid = config.margin_xgb_grid
         search = RandomizedSearchCV(
@@ -542,7 +613,10 @@ def tune_margin_regressor(
             random_state=config.random_seed,
             n_jobs=-1,
         )
-        search.fit(X_train, y_train)
+        if sw is not None:
+            search.fit(X_train, y_train_fit, sample_weight=sw)
+        else:
+            search.fit(X_train, y_train_fit)
 
         best_params = search.best_params_
         logger.info(
@@ -553,16 +627,23 @@ def tune_margin_regressor(
             model_type="xgb",
             xgb_params=best_params,
             random_state=config.random_seed,
+            bivariate_efficiency=bivariate,
         )
-        regressor.fit(X_train, y_train)
+        regressor.fit(X_train, y_train, sample_weight=sw, pace=pace_train)
 
     elif m_type == "catboost":
         from catboost import CatBoostRegressor
 
         X_train = data.margin.X_train
         X_val = data.margin.X_val
-        y_train = data.y_margin_train
-        y_val = data.y_margin_val
+        y_train = data.y_margin_train.to_numpy(dtype=np.float32)
+        y_val = data.y_margin_val.to_numpy(dtype=np.float32)
+
+        y_train_fit = (
+            (y_train / np.maximum(pace_train, 50.0)) * 100.0
+            if bivariate and pace_train is not None
+            else y_train
+        )
 
         grid = getattr(
             config,
@@ -587,7 +668,10 @@ def tune_margin_regressor(
             random_state=config.random_seed,
             n_jobs=1,
         )
-        search.fit(X_train, y_train)
+        if sw is not None:
+            search.fit(X_train, y_train_fit, sample_weight=sw)
+        else:
+            search.fit(X_train, y_train_fit)
 
         best_params = search.best_params_
         logger.info(
@@ -598,14 +682,15 @@ def tune_margin_regressor(
             model_type="catboost",
             xgb_params=best_params,
             random_state=config.random_seed,
+            bivariate_efficiency=bivariate,
         )
-        regressor.fit(X_train, y_train)
+        regressor.fit(X_train, y_train, sample_weight=sw, pace=pace_train)
 
     else:
         raise ValueError(f"Unknown margin model type '{m_type}'. Choose 'ridge', 'xgb', or 'catboost'.")
 
     # Evaluate on held-out validation set
-    val_preds = regressor.predict(X_val)
+    val_preds = regressor.predict(X_val, pace=pace_val)
     val_metrics = evaluate_margin_metrics(y_val, val_preds)
 
     logger.info(

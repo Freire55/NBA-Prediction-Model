@@ -70,7 +70,16 @@ def _extract_validation_probabilities(
             if reg_type == "ridge"
             else margin.feature_set.X_val
         )
-        margin_probs = margin.model.predict_proba(X_val)[:, 1]
+        val_pace = (
+            margin.feature_set.X_val["MATCHUP_EXPECTED_PACE"].to_numpy(dtype=np.float32)
+            if isinstance(margin.feature_set.X_val, pd.DataFrame)
+            and "MATCHUP_EXPECTED_PACE" in margin.feature_set.X_val.columns
+            else None
+        )
+        try:
+            margin_probs = margin.model.predict_proba(X_val, pace=val_pace)[:, 1]
+        except TypeError:
+            margin_probs = margin.model.predict_proba(X_val)[:, 1]
         columns.append(margin_probs)
         names.append("Pace Margin (CDF)")
 

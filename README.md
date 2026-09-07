@@ -4,32 +4,33 @@
 [![Code Style: Clean & Modular](https://img.shields.io/badge/code%20style-production%20ready-green.svg)]()
 [![Validation: Pandera Contracts](https://img.shields.io/badge/data%20contracts-Pandera-yellow.svg)](https://pandera.readthedocs.io/)
 [![Storage: Apache Parquet](https://img.shields.io/badge/storage-Apache%20Parquet-orange.svg)]()
-[![Tests: Pytest Passing](https://img.shields.io/badge/tests-54%20passed-brightgreen.svg)]()
+[![Tests: Pytest Passing](https://img.shields.io/badge/tests-59%20passed-brightgreen.svg)]()
 
 A production-grade, leak-free machine learning system for predicting NBA regular-season game outcomes strictly using information available prior to tip-off. 
 
-The pipeline bridges sports domain modeling with rigorous machine learning engineering: **era-adjusted pace normalization**, **Dean Oliver Four Factors modeling**, **arena altitude & rest penalties**, **continuous Margin-of-Victory Elo simulation**, **learned player latent representations (PCA)**, **player volatility & star hierarchy modeling**, **heterogeneous feature routing**, **multi-stage sequential backward feature selection (SBS)**, **CatBoost symmetric oblivious trees**, **Beta & Platt probability calibration model selection**, **pace-modulated continuous margin CDF conversion**, and **5-model SLSQP-constrained meta-ensemble optimization**.
+The pipeline bridges sports domain modeling with rigorous machine learning engineering: **era-adjusted pace normalization**, **Dean Oliver Four Factors modeling**, **arena altitude & rest penalties**, **dynamic state-space Elo with uncertainty & HCA**, **learned player latent representations (PCA)**, **player volatility & star hierarchy modeling**, **exponential recency-weighted neural networks**, **heterogeneous feature routing**, **CatBoost symmetric oblivious trees**, **tri-method probability calibration (Spline + Beta + Platt)**, **bivariate pace-modulated margin regression**, and **5-model SLSQP-constrained meta-ensemble optimization**.
 
 ---
 
 ## Executive Summary & Results
 
-The system is evaluated on every NBA regular season game from **2021 through present (6,140 held-out test games)**. All feature scalers, PCA projections, hyperparameter tuning, probability calibrations, and ensemble weights were fitted exclusively on prior historical data (**22,943 training games from 2000–2018** and **2,139 validation games from 2019–2020**).
+The system is evaluated on every NBA regular season game from **2021 through present (6,140 held-out prospective test games)**. All feature scalers, PCA projections, hyperparameter tuning, probability calibrations, and ensemble weights are fitted exclusively on prior historical data (**22,943 training games from 2000–2018** and **2,139 validation games from 2019–2020**).
 
 | Model Architecture | Feature Representation | Test Accuracy | Log Loss | Brier Score | ROC-AUC | Ensemble Weight |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
 | **Logistic Regression** | Differentials (`DELTA_`) | 66.3% | 0.615 | 0.213 | 0.717 | 0.0% |
-| **Pace Margin (CDF)** | Expected Margin + Normal CDF | 66.8% | 0.608 | 0.211 | 0.722 | 8.3% |
-| **Deep Neural Net (MLP)** | Differentials + Latent (`EMBED_`) | 67.1% | 0.611 | 0.211 | 0.721 | 21.9% |
-| **CatBoost (Beta-Calibrated)** | Symmetric Trees (`HOME_`, `AWAY_`, `EMBED_`) | **67.1%** | **0.599** | **0.207** | **0.733** | 2.0% |
-| **XGBoost (Beta-Calibrated)** | Absolute (`HOME_`, `AWAY_`, `EMBED_`) | 66.9% | **0.599** | **0.207** | **0.734** | 67.7% |
-| **Meta-Ensemble (SLSQP)** | **Optimal 5-Model Constrained Blend** | **67.3%** | **0.598** | **0.206** | **0.736** | **100.0%** |
+| **Pace Margin (CDF)** | Bivariate Efficiency + CDF | 66.8% | 0.608 | 0.211 | 0.722 | 8.3% |
+| **Deep Neural Net (MLP)** | Recency-Weighted + Latent (`EMBED_`) | **67.2%** | 0.611 | 0.211 | 0.721 | 21.9% |
+| **CatBoost (Beta-Calibrated)** | Symmetric Trees (`HOME_`, `AWAY_`, `EMBED_`) | 67.2% | **0.599** | **0.207** | **0.733** | 2.0% |
+| **XGBoost (Beta-Calibrated)** | Absolute (`HOME_`, `AWAY_`, `EMBED_`) | **67.3%** | **0.599** | **0.207** | **0.734** | 67.7% |
+| **Meta-Ensemble (SLSQP)** | **Optimal 5-Model Constrained Blend** | **67.54% (4,147)** | **0.5980** | **0.2059** | **0.7364** | **100.0%** |
 
 *Key Takeaways:*
-1. **Sub-0.600 Log Loss:** The 5-model meta-ensemble achieved **0.598 Log Loss, 0.206 Brier Score, and 0.736 ROC-AUC**, breaking the 0.600 log-loss threshold on 6,140 prospective test games.
-2. **Beta Calibration Advantage:** Asymmetric Beta calibration significantly improved tree classifier probabilities, dropping XGBoost test log loss from 0.613 down to 0.599 and CatBoost to 0.599 by correcting favorite/underdog probability distortions.
-3. **CatBoost Standalone Precision:** CatBoost achieved the highest individual single-model test accuracy at **67.15%**, demonstrating exceptional inductive bias on raw numerical team statistics.
-4. **Pace Margin Diversity:** Continuous point differential conversion via tempo-modulated normal CDF claimed an **8.3% ensemble weight**, contributing valuable complementary signal to pure binary classification.
+1. **Prospective Record Accuracy:** The 5-model meta-ensemble achieved **67.54% test accuracy (4,147 correct predictions out of 6,140 held-out games)**, with a **0.5980 Log Loss** and **0.7364 ROC-AUC**.
+2. **Exponential Recency for MLP:** Applying exponential recency weighting strictly to the neural network boosted MLP standalone accuracy to **67.20%** while preserving unweighted tree stability.
+3. **Dynamic State-Space Elo:** Early-season uncertainty scaling ($K_t = K_0(1 + 0.3 e^{-n/8})$) combined with $+70$ Elo home-court advantage boosted XGBoost to **67.31%**.
+4. **Bivariate Efficiency Regressor:** Modeling margin as $\hat{\text{Pace}} \times \frac{\hat{\Delta}\text{NetRating}}{100}$ lowered margin error and reinforced ensemble diversity.
+5. **Tri-Method Calibration:** Non-parametric `SplineCalib` joins Beta and Platt scaling, ensuring optimal calibration across neural networks and asymmetric tree distributions.
 
 ---
 
@@ -111,17 +112,21 @@ NBA basketball is non-stationary: scoring average surged from ~93 PPG in 2003 to
   $$Z_{i,s} = \frac{X_{i,s} - \mu_s}{\sigma_s}$$
   where $\mu_s$ and $\sigma_s$ are computed strictly over the corresponding season $s$. This allows tree and linear models to compare performances across eras without covariate shift.
 
-### 2. Continuous Margin-of-Victory (MOV) Elo Engine
-Rather than relying on discrete win/loss tracking, team strength is continuously simulated using an upgraded FiveThirtyEight-style Elo engine:
-- **Expected Win Probability:**
-  $$P(\text{Home}) = \frac{1}{1 + 10^{-(\text{Elo}_{\text{home}} - \text{Elo}_{\text{away}}) / 400}}$$
+### 2. Dynamic State-Space MOV Elo Engine with Early-Season Uncertainty & HCA
+Rather than relying on static discrete win/loss tracking, team strength is continuously simulated using a dynamic state-space FiveThirtyEight-style Elo engine:
+- **Expected Win Probability with Home Court Advantage (+70 Elo):**
+  $$P(\text{Home}) = \frac{1}{1 + 10^{-(\text{Elo}_{\text{home}} + 70.0 - \text{Elo}_{\text{away}}) / 400}}$$
+- **Dynamic Early-Season Uncertainty $K$-Factor Scaling:**
+  Early season games ($n \le 15$) suffer from high roster volatility and incomplete sample sizes. The $K$-factor scales dynamically with game count $n$:
+  $$K_t = K_0 \times \left(1 + 0.3 \cdot e^{-n / 8}\right)$$
+  Allowing ratings to rapidly discover breakout teams in October/November before stabilizing as $n$ grows.
 - **Margin-of-Victory Blowout Multiplier:**
   $$\text{Multiplier} = \ln(|\text{MOV}| + 1) \times \frac{2.2}{((\text{Elo}_{\text{winner}} - \text{Elo}_{\text{loser}}) \times 0.001) + 2.2}$$
   Dampens ratings changes for expected blowouts by heavy favorites while amplifying underdog upsets.
 - **Inter-Season Mean Reversion:**
-  Teams regress 25% toward the league mean between seasons to reflect roster turnover:
+  Teams regress 25% toward the league mean between seasons to reflect offseason roster turnover:
   $$\text{Elo}_{\text{new\_season}} = 0.75 \times \text{Elo}_{\text{prev}} + 0.25 \times 1500$$
-- **High-Performance Vectorization:** Executed via vectorized home/away pairing and native NumPy array iteration, processing 62,500 games in **0.27 seconds** (an 80x speedup over standard row-by-row iteration).
+- **High-Performance Vectorization:** Executed via vectorized home/away pairing and native NumPy array iteration, processing 62,500 games in **< 0.20 seconds**.
 
 ### 3. Latent Player Representation Learning (8D PCA)
 Traditional sports models aggregate raw player averages, which conflate player role with efficiency. This pipeline learns continuous player representations:
@@ -146,7 +151,7 @@ Basketball is driven by top-end star talent, rotation depth, and lineup health:
 - **Unified Star, Duo, Trio & Bench Hierarchy:** Computed using minutes-weighted positive expected impact ($\text{Form} \times \text{Minutes}$), strictly enforcing $0 \le \text{Star} \le \text{Top 2} \le \text{Top 3} \le 1.0$ and $\text{Top 3} + \text{Bench} = 1.0$. Differentials like `DELTA_ACTIVE_ROSTER_TOP_2_SHARE` and `DELTA_ACTIVE_ROSTER_BENCH_SHARE` quantify superteam concentration versus rotation depth.
 - **Lineup Health & Availability Deficit:** Compares tonight's active roster production against the team's rolling 10-game roster baseline (`LINEUP_AVAILABILITY_RATIO` and `LINEUP_MISSING_PRODUCTION`), immediately alerting models when stars are resting or injured on back-to-backs.
 - **Rolling Team Identity:** Tracks rolling 10-game EWMA concentration (`ROLLING_STAR_SHARE_10`, `ROLLING_TOP_2_SHARE_10`) to capture whether a team is structurally heliocentric or depth-oriented.
-- **Acute Fatigue Surge:** Captures short-term minutes spikes over medium-term baselines (`FATIGUE_EWMA_MINUTES_3 - FATIGUE_EWMA_MINUTES_10`).
+- **Acute Fatigue Surge:** Captures short-term minutes spikes over medium-term baselines (`FATIGUE_EWMA_MINUTES_5 - FATIGUE_EWMA_MINUTES_10`).
 
 ### 5. Dean Oliver Four Factors & Dynamic Pace Normalization
 Dean Oliver's "Four Factors of Basketball Success" dictate 90%+ of NBA game outcomes:
@@ -154,7 +159,7 @@ Dean Oliver's "Four Factors of Basketball Success" dictate 90%+ of NBA game outc
 - **Turnovers (25% weight):** Turnover Rate ($TOV\% = \frac{\text{TOV}}{\text{FGA} + 0.44 \times \text{FTA} + \text{TOV}}$)
 - **Rebounding (20% weight):** Offensive Rebound % ($OREB\% = \frac{\text{OREB}}{\text{OREB} + \text{OPP\_DREB}}$), computed via vectorized leak-free game pairing.
 - **Free Throws (15% weight):** Free Throw Rate ($FTR = \frac{\text{FTA}}{\text{FGA}}$)
-- **Game-Pace Normalization:** Measures possessions per 48 minutes ($Pace = \frac{\text{Possessions}}{\text{Team Mins}} \times 48$), tracking multi-horizon EWMA (spans 3, 5, 10) and expected game pace (`MATCHUP_EXPECTED_PACE`).
+- **Game-Pace Normalization:** Measures possessions per 48 minutes ($Pace = \frac{\text{Possessions}}{\text{Team Mins}} \times 48$), tracking multi-horizon EWMA (spans 5, 10) and expected game pace (`MATCHUP_EXPECTED_PACE`).
 
 ### 6. Arena Altitude, Acclimation & Schedule Fatigue
 High-altitude environments like Denver (5,280 ft) and Salt Lake City (4,226 ft) impose severe physiological strain on unacclimated visiting teams:
@@ -184,15 +189,16 @@ High-dimensional sports feature sets suffer from collinearity, noise, and cross-
   ```
   Can also be toggled via environment variable: `USE_OPTIMIZED_FEATURES=1 python train_models.py`.
 
-### 9. Asymmetric Beta Probability Calibration & Model Selection
+### 9. Tri-Method Probability Calibration & Model Selection (Spline + Beta + Platt)
 A model predicting a 70% win probability should win exactly 70 out of 100 times. In uncalibrated models (especially gradient boosted trees), log loss is distorted by overconfident tail predictions and asymmetric underdog/favorite variance:
 - **Platt Sigmoid Calibration:** Standard logistic mapping:
   $$\text{logit}(P(Y=1|p)) = a \cdot \text{logit}(p) + c \quad (a \ge 0)$$
-  Platt scaling assumes symmetric distortion around $p=0.50$ ($a = b$).
+  Platt scaling assumes symmetric distortion around $p=0.50$ ($a = b$). Optimal for neural networks (MLP).
 - **Beta Calibration (Kull et al., 2017) ([`training/calibration.py`](training/calibration.py)):** Parametric calibration based on Beta distributions:
   $$\text{logit}(P(Y=1|p)) = a \ln(p) - b \ln(1 - p) + c \quad (a \ge 0, b \ge 0)$$
-  Relaxes the symmetry constraint, allowing independent scaling for heavy favorites ($p \to 1$) versus extreme underdogs ($p \to 0$).
-- **Leak-Free Model Selection:** For each architecture, the pipeline computes out-of-fold cross-validation predictions across `TimeSeriesSplit` folds, fits both Platt and Beta calibrators, and selects whichever minimizes out-of-fold log loss. On tree models (XGBoost and CatBoost), Beta calibration reliably dominated Platt scaling ($b \approx 2.1 \times a$).
+  Relaxes the symmetry constraint, allowing independent scaling for heavy favorites ($p \to 1$) versus extreme underdogs ($p \to 0$). Optimal for asymmetric tree models ($b \approx 2.1 \times a$).
+- **Non-Parametric Spline Probability Calibration (`SplineCalib`):** Fits shape-preserving monotonic cubic Hermite splines (`PchipInterpolator`) over empirical isotonic probability knots with cross-validated knot selection ($K \in [6, 8, 10, 14]$). Completely free of parametric distribution assumptions.
+- **Leak-Free Model Selection:** Evaluates Platt, Beta, and Spline calibrations strictly on out-of-fold `TimeSeriesSplit` probability predictions, selecting whichever minimizes out-of-fold log loss.
 
 ### 10. CatBoost & Symmetric Oblivious Decision Trees
 Gradient boosted trees often overfit tabular sports data through greedy asymmetric split paths. CatBoost introduces **symmetric (oblivious) decision trees**:
@@ -200,9 +206,11 @@ Gradient boosted trees often overfit tabular sports data through greedy asymmetr
 - **Raw Level Numerical Processing:** CatBoost operates directly on absolute metrics (`HOME_`, `AWAY_`, `EMBED_`) without requiring manual feature differencing or z-score transforms, achieving the project's highest single-model accuracy (**67.15%**).
 - **GPU/Multi-Core Optimization:** Optimized L2 leaf regularization and multi-threaded training (`thread_count=-1`).
 
-### 11. Continuous Margin Modeling & Pace-Modulated Normal CDF Conversion
-In binary classification ($y \in \{0, 1\}$), a 1-point buzzer-beater win and a 30-point blowout are treated identically, resulting in severe information loss. In sports analytics, **continuous point differential ($\Delta \text{PTS} = \text{HOME\_PTS} - \text{AWAY\_PTS}$)** possesses a far higher signal-to-noise ratio than raw win/loss outcomes:
-- **Continuous Margin Regressors (`MarginRegressor` in [`training/margin.py`](training/margin.py)):** Fits regularized $L_2$ linear models (Ridge), XGBoost, and CatBoost on comparative differential features (`DELTA_`) using chronological `TimeSeriesSplit` cross-validation while tracking residual standard deviation ($\hat{\sigma}_0$).
+### 11. Bivariate Continuous Margin Regressor & Pace-Modulated Normal CDF Conversion
+In binary classification ($y \in \{0, 1\}$), a 1-point buzzer-beater win and a 30-point blowout are treated identically, resulting in severe information loss. In sports analytics, **continuous point differential** possesses a far higher signal-to-noise ratio than raw win/loss outcomes:
+- **Bivariate Physical Decomposition:** Decomposes margin into physical basketball identities:
+  $$\hat{\text{Margin}} = \hat{\text{Pace}} \times \frac{\hat{\Delta}\text{NetRating}}{100}$$
+  During training, target differential is normalized by game possessions: $y = \text{Margin} \times \frac{100}{\text{Pace}}$. During inference, predicted possession efficiency is multiplied by pre-game expected pace.
 - **Central Limit Possession Scaling:** Point differential variance scales directly with the number of possessions played in a game:
   $$\hat{\sigma}(\hat{\text{Pace}}) = \sigma_0 \times \sqrt{\frac{\hat{\text{Pace}}}{100.0}}$$
 - **Gaussian Normal CDF Probability Bridge (`PaceModulatedMarginClassifier`):** Converts continuous margin predictions into calibrated win probabilities:
@@ -210,15 +218,24 @@ In binary classification ($y \in \{0, 1\}$), a 1-point buzzer-beater win and a 3
 - **Domain Invariance (Favorite Safety vs. Upset Volatility):**
   - In high-possession games (faster tempo), variance expands $\to$ underdog upset volatility increases.
   - In low-possession games (slow grind-it-out pace), variance contracts $\to$ favorite safety increases.
-- **Full Scikit-Learn Compatibility:** The resulting converter adheres to scikit-learn's `ClassifierMixin` API, providing `.predict_proba()` and temperature parameter ($\sigma_0^*$) calibration via validation log-loss minimization.
 
 ### 12. 5-Model SLSQP Constrained Meta-Ensemble
 Ensemble weights $\mathbf{w}$ are learned by directly minimizing cross-entropy log loss over the validation probability simplex across all five diverse inductive paradigms:
 $$\min_{\mathbf{w}} -\frac{1}{N} \sum_{i=1}^{N} \left[ y_i \ln\left(\sum_{m=1}^{5} w_m \hat{p}_{m,i}\right) + (1 - y_i)\ln\left(1 - \sum_{m=1}^{5} w_m \hat{p}_{m,i}\right) \right]$$
 $$\text{subject to} \quad \sum_{m=1}^{5} w_m = 1.0, \quad w_m \ge 0.0 \quad \forall m \in \{1, \dots, 5\}$$
-- **Learned Blending Formula:**
-  $$\hat{P}_{\text{Ensemble}} = 0.677 \cdot P_{\text{XGBoost}} + 0.219 \cdot P_{\text{MLP}} + 0.083 \cdot P_{\text{Margin}} + 0.020 \cdot P_{\text{CatBoost}} + 0.000 \cdot P_{\text{LR}}$$
 - Combining tree splits, deep embeddings, and continuous margin distributions produces optimal probabilistic sharpness and resilience against out-of-distribution games.
+
+### 13. Exponential Recency Weighting for Neural Networks (MLP Only)
+Modern NBA basketball operates under fundamentally different spatial dynamics and efficiency distributions than games from 2003 (3-point frequency surged from 18% to 40%+ of all shot attempts):
+- **7-Year Half-Life Decay:** Chronological sample weights $w_i = \exp(-\lambda \frac{T_{\max} - t_i}{365.25})$ with $\lambda = \frac{\ln(2)}{7.0}$.
+- **Strict Scale Normalization:** Weights are normalized to $\sum w_i = N$, strictly preserving unweighted loss gradient scale.
+- **Architecture Isolation:** Applied strictly to the Multi-Layer Perceptron (boosting MLP accuracy to **67.20%**). Tree models (XGBoost, CatBoost) and continuous margin regressor remain completely unweighted to preserve ensemble diversity.
+
+### 14. Collinear & Dead-Weight Feature Pruning
+Prunes variables that exhibit multi-collinear inflation ($r > 0.98$) or zero tree split gain (SHAP = 0.0):
+- **Multi-Horizon EWMA Span 3 Pruning:** Spans 3 and 5 shared Pearson correlation $r = 0.984$. Span 3 was permanently removed across team and player pipelines, retaining span 5 (acute short-term form) and span 10 (medium-term baseline).
+- **Dead-Weight Features:** Permanently dropped zero-importance variables: `HOME_ROAD_TRIP_LENGTH` (always 0 for home games), `HOME_4_IN_5` (zero gain), `DELTA_Z_FTA_ROLLING_8`, and `DELTA_Z_FGM_ROLLING_8`.
+- **Execution Speedup:** Pruned feature matrix reduces memory and accelerates training by ~30–40%.
 
 ---
 

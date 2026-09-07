@@ -9,7 +9,7 @@ to disk for auditability and production inference.
 """
 
 from pathlib import Path
-from typing import Any, Tuple
+from typing import Any, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -17,6 +17,7 @@ from sklearn.base import clone
 from sklearn.preprocessing import StandardScaler
 
 from training.config import FeatureSet, TrainingArtifacts
+from training.data import compute_exponential_recency_weights
 from training.margin import MarginRegressor, PaceModulatedMarginClassifier
 
 # ======================================================
@@ -76,14 +77,24 @@ def _retrain_classifier(
     estimator: Any,
     X_train: Any,
     y_train: Any,
+    sample_weight: Optional[np.ndarray] = None,
 ) -> Any:
     """Clones a tuned estimator configuration and refits it on full historical data."""
     final_estimator = clone(estimator)
+    if sample_weight is not None:
+        try:
+            final_estimator.fit(X_train, y_train, sample_weight=sample_weight)
+            return final_estimator
+        except (TypeError, ValueError):
+            pass
     final_estimator.fit(X_train, y_train)
     return final_estimator
 
 
-def _retrain_margin_pipeline(artifacts: TrainingArtifacts) -> None:
+def _retrain_margin_pipeline(
+    artifacts: TrainingArtifacts,
+    sample_weight: Optional[np.ndarray] = None,
+) -> None:
     """
     Retrains the continuous margin model and pace converter on full historical data.
 
@@ -107,25 +118,37 @@ def _retrain_margin_pipeline(artifacts: TrainingArtifacts) -> None:
     margin_fs.X_train_full_processed = train_scaled
     margin_fs.X_test_processed = test_scaled
 
+    full_pace = (
+        margin_train_full["MATCHUP_EXPECTED_PACE"].to_numpy(dtype=np.float32)
+        if "MATCHUP_EXPECTED_PACE" in margin_train_full.columns
+        else None
+    )
+
     model = artifacts.margin.model
     if isinstance(model, PaceModulatedMarginClassifier):
         reg = model.regressor
         if reg.model_type == "ridge":
-            reg.fit(train_scaled, y_margin_full, feature_names=margin_fs.feature_names)
+            reg.fit(train_scaled, y_margin_full, feature_names=margin_fs.feature_names, sample_weight=sample_weight, pace=full_pace)
         else:
-            reg.fit(margin_train_full, y_margin_full)
+            reg.fit(margin_train_full, y_margin_full, sample_weight=sample_weight, pace=full_pace)
         artifacts.margin.final_model = model
     elif isinstance(model, MarginRegressor):
         margin_final = clone(model)
         if model.model_type == "ridge":
-            margin_final.fit(train_scaled, y_margin_full, feature_names=margin_fs.feature_names)
+            margin_final.fit(train_scaled, y_margin_full, feature_names=margin_fs.feature_names, sample_weight=sample_weight, pace=full_pace)
         else:
-            margin_final.fit(margin_train_full, y_margin_full)
+            margin_final.fit(margin_train_full, y_margin_full, sample_weight=sample_weight, pace=full_pace)
         artifacts.margin.final_model = margin_final
     else:
         # Generic fallback
         margin_final = clone(model)
-        margin_final.fit(train_scaled, y_margin_full)
+        if sample_weight is not None:
+            try:
+                margin_final.fit(train_scaled, y_margin_full, sample_weight=sample_weight)
+            except (TypeError, ValueError):
+                margin_final.fit(train_scaled, y_margin_full)
+        else:
+            margin_final.fit(train_scaled, y_margin_full)
         artifacts.margin.final_model = margin_final
 
 
@@ -146,6 +169,20 @@ def retrain_on_full_data(artifacts: TrainingArtifacts) -> None:
     lr_train_full = _combine_splits(data.lr.X_train, data.lr.X_val)
     y_train_full = _combine_splits(data.y_train, data.y_val)
 
+    # Compute full historical recency weights across combined train + val window
+    sample_weights_full = None
+    if (
+        artifacts.config is not None
+        and getattr(artifacts.config, "use_recency_weights", True)
+        and data.dates_train is not None
+        and data.dates_val is not None
+    ):
+        full_dates = pd.concat([data.dates_train, data.dates_val], axis=0)
+        sample_weights_full = compute_exponential_recency_weights(
+            full_dates,
+            half_life_years=getattr(artifacts.config, "recency_half_life_years", 7.0),
+        )
+
     # Fit and apply scalers
     mlp_scaler, mlp_train_scaled, mlp_test_scaled = _fit_and_apply_scaler(
         mlp_train_full, data.mlp.X_test
@@ -159,25 +196,25 @@ def retrain_on_full_data(artifacts: TrainingArtifacts) -> None:
             lr_scaler, lr_train_full.columns, artifacts.output_dir / SCALER_STATS_FILE
         )
         artifacts.lr.final_model = _retrain_classifier(
-            artifacts.lr.model, lr_train_scaled, y_train_full
+            artifacts.lr.model, lr_train_scaled, y_train_full, sample_weight=None
         )
         artifacts.lr.feature_set.scaler = lr_scaler
         artifacts.lr.feature_set.X_train_full = lr_train_full
         artifacts.lr.feature_set.X_train_full_processed = lr_train_scaled
         artifacts.lr.feature_set.X_test_processed = lr_test_scaled
 
-    # Retrain binary base classifiers
+    # Retrain binary base classifiers with architecture-selective weighting
     artifacts.mlp.final_model = _retrain_classifier(
-        artifacts.mlp.model, mlp_train_scaled, y_train_full
+        artifacts.mlp.model, mlp_train_scaled, y_train_full, sample_weight=sample_weights_full
     )
     artifacts.xgb.final_model = _retrain_classifier(
-        artifacts.xgb.model, xgb_train_full, y_train_full
+        artifacts.xgb.model, xgb_train_full, y_train_full, sample_weight=None
     )
 
     if artifacts.catboost.model is not None and data.catboost is not None:
         catboost_train_full = _combine_splits(data.catboost.X_train, data.catboost.X_val)
         artifacts.catboost.final_model = _retrain_classifier(
-            artifacts.catboost.model, catboost_train_full, y_train_full
+            artifacts.catboost.model, catboost_train_full, y_train_full, sample_weight=None
         )
         artifacts.catboost.feature_set.X_train_full = catboost_train_full
 
@@ -189,5 +226,5 @@ def retrain_on_full_data(artifacts: TrainingArtifacts) -> None:
 
     artifacts.xgb.feature_set.X_train_full = xgb_train_full
 
-    # Retrain margin regressor and pace converter if present
-    _retrain_margin_pipeline(artifacts)
+    # Retrain margin regressor and pace converter unweighted
+    _retrain_margin_pipeline(artifacts, sample_weight=None)

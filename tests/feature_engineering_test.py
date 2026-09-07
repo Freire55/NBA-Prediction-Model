@@ -334,7 +334,7 @@ def test_pace_calculation_and_leak_free_rolling():
     assert np.isclose(bos_rolling[1], expected_poss)
 
     # 3. Multi-horizon EWMA pace features
-    for span in [3, 5, 10]:
+    for span in [5, 10]:
         col = f"PACE_EWMA_{span}"
         assert col in df.columns
         assert not df[col].isna().any()
@@ -345,7 +345,7 @@ def test_pace_calculation_and_leak_free_rolling():
     assert "DELTA_ROLLING_PACE" in matchups.columns
     assert "DELTA_ROLLING_PACE_8" in matchups.columns
     assert "MATCHUP_EXPECTED_PACE" in matchups.columns
-    for span in [3, 5, 10]:
+    for span in [5, 10]:
         assert f"DELTA_PACE_EWMA_{span}" in matchups.columns
 
     # 5. Target leakage: Single-game unshifted PACE and MIN must be dropped

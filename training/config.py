@@ -128,6 +128,10 @@ class TrainingData:
     y_margin_train: pd.Series | None = None
     y_margin_val: pd.Series | None = None
     y_margin_test: pd.Series | None = None
+    sample_weights_train: np.ndarray | None = None
+    dates_train: pd.Series | None = None
+    dates_val: pd.Series | None = None
+    dates_test: pd.Series | None = None
 
 
 # ======================================================
@@ -158,6 +162,10 @@ class TrainingConfig:
 
     train_end: str = "22018"
     validation_end: str = "22020"
+
+    # Exponential recency sample weighting
+    use_recency_weights: bool = True
+    recency_half_life_years: float = 7.0
 
     # ======================================================
     # Feature Configuration (Heterogeneous)
@@ -212,7 +220,6 @@ class TrainingConfig:
                 "EMBED_DELTA_1_MAX",
             ],
             "lr": [
-                "DELTA_Z_FG3A_EWMA_3",
                 "DELTA_Z_FG3A_EWMA_5",
                 "DELTA_SOS_ROLLING_8",
                 "DELTA_ACTIVE_ROSTER_EXPECTED_FTR",
@@ -226,6 +233,8 @@ class TrainingConfig:
         default_factory=lambda: {
             "mlp": [
                 "DELTA_ROLLING_PACE",
+                "DELTA_Z_FTA_ROLLING_8",
+                "DELTA_Z_FGM_ROLLING_8",
             ],
             "xgb": [
                 "HOME_IS_AWAY",
@@ -239,6 +248,8 @@ class TrainingConfig:
                 "AWAY_SEASON_YEAR",
                 "HOME_ROLLING_PACE",
                 "AWAY_ROLLING_PACE",
+                "HOME_ROAD_TRIP_LENGTH",
+                "HOME_4_IN_5",
             ],
             "lr": [
                 "DELTA_ROLLING_PACE",
@@ -319,6 +330,7 @@ class TrainingConfig:
     )
 
     margin_model_type: str = "ridge"
+    margin_bivariate_efficiency: bool = True
 
     margin_ridge_grid: dict[str, Any] = field(
         default_factory=lambda: {

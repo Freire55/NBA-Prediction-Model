@@ -83,7 +83,16 @@ def _extract_margin_test_probabilities(
             if reg_type == "ridge"
             else artifacts.margin.feature_set.X_test
         )
-        return margin_model.predict_proba(X_test)[:, 1]
+        test_pace = (
+            artifacts.margin.feature_set.X_test["MATCHUP_EXPECTED_PACE"].to_numpy(dtype=np.float32)
+            if isinstance(artifacts.margin.feature_set.X_test, pd.DataFrame)
+            and "MATCHUP_EXPECTED_PACE" in artifacts.margin.feature_set.X_test.columns
+            else None
+        )
+        try:
+            return margin_model.predict_proba(X_test, pace=test_pace)[:, 1]
+        except TypeError:
+            return margin_model.predict_proba(X_test)[:, 1]
 
     if isinstance(margin_model, MarginRegressor):
         reg_type = margin_model.model_type

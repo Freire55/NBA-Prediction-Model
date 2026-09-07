@@ -10,7 +10,7 @@ and standardizes numerical inputs where required.
 
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -34,6 +34,7 @@ ERA_ADJUSTED_FILE = "era_adjusted_nba.csv"
 
 TARGET_COLUMN = "HOME_WIN"
 SEASON_COLUMN = "HOME_SEASON_ID"
+GAME_DATE_COLUMN = "HOME_GAME_DATE"
 
 
 # ======================================================
@@ -78,6 +79,35 @@ def _identify_post_game_leakage_columns() -> Set[str]:
         for stat in base_box_stats
     }
     return {TARGET_COLUMN, "TARGET_MARGIN", "MARGIN"} | post_game_cols
+ 
+ 
+def compute_exponential_recency_weights(
+    dates: Union[pd.Series, np.ndarray],
+    half_life_years: float = 7.0,
+) -> np.ndarray:
+    """
+    Computes exponential decay sample weights based on chronological recency.
+
+    Mathematical Formulation:
+        w_i = exp(-lambda * (T_max - t_i) / 365.25)
+        lambda = ln(2) / half_life_years
+
+    Weights are normalized so that mean(w) == 1.0 (sum(w) == N), preserving
+    the unweighted loss gradient scale while emphasizing modern basketball dynamics.
+    """
+    date_series = pd.to_datetime(dates)
+    t_max = date_series.max()
+    delta_years = (t_max - date_series).dt.total_seconds() / (365.25 * 86400.0)
+
+    decay_lambda = np.log(2.0) / max(float(half_life_years), 0.1)
+    raw_weights = np.exp(-decay_lambda * delta_years.to_numpy(dtype=np.float64))
+
+    total = float(np.sum(raw_weights))
+    if total <= 0:
+        return np.ones(len(raw_weights), dtype=np.float32)
+
+    normalized_weights = raw_weights * (len(raw_weights) / total)
+    return normalized_weights.astype(np.float32)
 
 
 # ======================================================
@@ -265,6 +295,18 @@ def load_and_prep_data(
         f"Margin: {len(summary.margin_feature_names)}"
     )
 
+    # Extract game dates and calculate exponential recency sample weights
+    dates_train = train_df[GAME_DATE_COLUMN].copy() if GAME_DATE_COLUMN in train_df.columns else None
+    dates_val = val_df[GAME_DATE_COLUMN].copy() if GAME_DATE_COLUMN in val_df.columns else None
+    dates_test = test_df[GAME_DATE_COLUMN].copy() if GAME_DATE_COLUMN in test_df.columns else None
+
+    sample_weights_train = None
+    if dates_train is not None and getattr(config, "use_recency_weights", True):
+        sample_weights_train = compute_exponential_recency_weights(
+            dates_train,
+            half_life_years=getattr(config, "recency_half_life_years", 7.0),
+        )
+
     return TrainingData(
         lr=_build_feature_set(train_df, val_df, test_df, feature_dict["lr"]),
         xgb=_build_feature_set(train_df, val_df, test_df, feature_dict["xgb"]),
@@ -278,6 +320,10 @@ def load_and_prep_data(
         y_margin_val=y_margin_val,
         y_margin_test=y_margin_test,
         summary=summary,
+        sample_weights_train=sample_weights_train,
+        dates_train=dates_train,
+        dates_val=dates_val,
+        dates_test=dates_test,
     )
 
 

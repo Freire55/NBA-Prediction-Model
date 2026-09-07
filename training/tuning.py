@@ -16,6 +16,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 from catboost import CatBoostClassifier
 from sklearn.base import clone
@@ -83,12 +84,16 @@ class EarlyStoppingXGBClassifier(XGBClassifier):
             X_val = X.iloc[split:] if hasattr(X, "iloc") else X[split:]
             y_tr = y.iloc[:split] if hasattr(y, "iloc") else y[:split]
             y_val = y.iloc[split:] if hasattr(y, "iloc") else y[split:]
+            fit_kwargs = dict(kwargs)
+            if "sample_weight" in fit_kwargs and fit_kwargs["sample_weight"] is not None:
+                sw = fit_kwargs["sample_weight"]
+                fit_kwargs["sample_weight"] = sw.iloc[:split] if hasattr(sw, "iloc") else sw[:split]
             return super().fit(
                 X_tr,
                 y_tr,
                 eval_set=[(X_val, y_val)],
                 verbose=False,
-                **kwargs,
+                **fit_kwargs,
             )
         return super().fit(X, y, verbose=False, **kwargs)
 
@@ -117,13 +122,17 @@ class EarlyStoppingCatBoostClassifier(CatBoostClassifier):
             X_val = X.iloc[split:] if hasattr(X, "iloc") else X[split:]
             y_tr = y.iloc[:split] if hasattr(y, "iloc") else y[:split]
             y_val = y.iloc[split:] if hasattr(y, "iloc") else y[split:]
+            fit_kwargs = dict(kwargs)
+            if "sample_weight" in fit_kwargs and fit_kwargs["sample_weight"] is not None:
+                sw = fit_kwargs["sample_weight"]
+                fit_kwargs["sample_weight"] = sw.iloc[:split] if hasattr(sw, "iloc") else sw[:split]
             return super().fit(
                 X_tr,
                 y_tr,
                 eval_set=(X_val, y_val),
                 early_stopping_rounds=self.early_stopping_rounds,
                 verbose=False,
-                **kwargs,
+                **fit_kwargs,
             )
         return super().fit(X, y, verbose=False, **kwargs)
 
@@ -177,6 +186,8 @@ def tune_mlp(
     y_train: Any,
     config: TrainingConfig,
     tscv: TimeSeriesSplit,
+    sample_weight: Optional[np.ndarray] = None,
+    n_jobs: int = -1,
 ) -> Any:
     """
     Tunes Multi-Layer Perceptron hyperparameters over the configured parameter distributions.
@@ -196,9 +207,12 @@ def tune_mlp(
         cv=tscv,
         scoring="neg_log_loss",
         random_state=config.random_seed,
-        n_jobs=-1,
+        n_jobs=n_jobs,
     )
-    search.fit(X_train, y_train)
+    if sample_weight is not None:
+        search.fit(X_train, y_train, sample_weight=sample_weight)
+    else:
+        search.fit(X_train, y_train)
     logger.info("      Best MLP CV Log Loss: %.4f", -search.best_score_)
     return search
 
@@ -208,6 +222,8 @@ def tune_xgboost(
     y_train: Any,
     config: TrainingConfig,
     tscv: TimeSeriesSplit,
+    sample_weight: Optional[np.ndarray] = None,
+    n_jobs: int = -1,
 ) -> Any:
     """
     Tunes XGBoost gradient boosted trees with early stopping and histogram binning.
@@ -226,9 +242,12 @@ def tune_xgboost(
         n_iter=config.xgb_search_iterations,
         cv=tscv,
         config=config,
-        n_jobs=-1,
+        n_jobs=n_jobs,
     )
-    search.fit(X_train, y_train)
+    if sample_weight is not None:
+        search.fit(X_train, y_train, sample_weight=sample_weight)
+    else:
+        search.fit(X_train, y_train)
     logger.info("      Best XGBoost CV Log Loss: %.4f", -search.best_score_)
     return search
 
@@ -238,6 +257,8 @@ def tune_catboost(
     y_train: Any,
     config: TrainingConfig,
     tscv: TimeSeriesSplit,
+    sample_weight: Optional[np.ndarray] = None,
+    thread_count: int = -1,
 ) -> Any:
     """
     Tunes CatBoost gradient boosted trees with early stopping and symmetric oblivious splits.
@@ -249,7 +270,7 @@ def tune_catboost(
             val_fraction=getattr(config, "early_stopping_val_fraction", 0.1),
             random_seed=config.random_seed,
             eval_metric="Logloss",
-            thread_count=-1,
+            thread_count=thread_count,
             verbose=False,
         ),
         param_distributions=config.catboost_grid,
@@ -258,7 +279,10 @@ def tune_catboost(
         config=config,
         n_jobs=1,
     )
-    search.fit(X_train, y_train)
+    if sample_weight is not None:
+        search.fit(X_train, y_train, sample_weight=sample_weight)
+    else:
+        search.fit(X_train, y_train)
     logger.info("      Best CatBoost CV Log Loss: %.4f", -search.best_score_)
     return search
 
@@ -287,6 +311,8 @@ def tune_logistic_regression(
     return search
 
 
+
+
 # ======================================================
 # Probability Calibration
 # ======================================================
@@ -299,32 +325,40 @@ def calibrate_best_models(
     data: TrainingData,
     tscv: TimeSeriesSplit,
     config: Optional[TrainingConfig] = None,
+    sample_weight: Optional[np.ndarray] = None,
 ) -> Tuple[Any, Any, Any, Any, Dict[str, Any]]:
     """
     Fits cross-validated probability calibration across available base models.
     Performs model selection between Platt Scaling and Beta Calibration for each model.
+    Applies selective recency weighting: MLP receives sample weights, while tree models remain unweighted.
     """
-    logger.info("      [Calibration] Evaluating Platt vs Beta calibration for MLP...")
+    sw = sample_weight if sample_weight is not None else (
+        getattr(data, "sample_weights_train", None)
+        if (config is None or getattr(config, "use_recency_weights", True))
+        else None
+    )
+
+    logger.info("      [Calibration] Evaluating Platt vs Beta vs Spline calibration for MLP...")
     mlp_cal, mlp_meta = calibrate_estimator_with_model_selection(
-        mlp_estimator, data.mlp.X_train_processed, data.y_train, tscv
+        mlp_estimator, data.mlp.X_train_processed, data.y_train, tscv, sample_weight=sw
     )
 
-    logger.info("      [Calibration] Evaluating Platt vs Beta calibration for XGBoost...")
+    logger.info("      [Calibration] Evaluating Platt vs Beta vs Spline calibration for XGBoost...")
     xgb_cal, xgb_meta = calibrate_estimator_with_model_selection(
-        xgb_estimator, data.xgb.X_train, data.y_train, tscv
+        xgb_estimator, data.xgb.X_train, data.y_train, tscv, sample_weight=None
     )
 
-    logger.info("      [Calibration] Evaluating Platt vs Beta calibration for CatBoost...")
+    logger.info("      [Calibration] Evaluating Platt vs Beta vs Spline calibration for CatBoost...")
     cb_cal, cb_meta = calibrate_estimator_with_model_selection(
-        catboost_estimator, data.catboost.X_train, data.y_train, tscv
+        catboost_estimator, data.catboost.X_train, data.y_train, tscv, sample_weight=None
     )
 
     lr_cal = None
     lr_meta = {"method": "none", "selected_log_loss": None}
     if lr_estimator is not None and getattr(config, "include_logistic_regression", False):
-        logger.info("      [Calibration] Evaluating Platt vs Beta calibration for Logistic Regression...")
+        logger.info("      [Calibration] Evaluating Platt vs Beta vs Spline calibration for Logistic Regression...")
         lr_cal, lr_meta = calibrate_estimator_with_model_selection(
-            lr_estimator, data.lr.X_train_processed, data.y_train, tscv
+            lr_estimator, data.lr.X_train_processed, data.y_train, tscv, sample_weight=None
         )
 
     calibration_report = {
@@ -372,6 +406,8 @@ def tune_base_models(
 ) -> Tuple[ModelArtifacts, ModelArtifacts, ModelArtifacts, ModelArtifacts]:
     """
     Orchestrates hyperparameter tuning and calibration across base classifiers.
+    Applies architecture-selective recency weighting exclusively to MLP while
+    keeping decision trees and linear models unweighted.
     If include_logistic_regression is False, skips LR to accelerate training.
 
     Returns:
@@ -379,10 +415,15 @@ def tune_base_models(
         containing tuned and calibrated models.
     """
     tscv = TimeSeriesSplit(n_splits=config.cv_folds)
+    sw = (
+        getattr(data, "sample_weights_train", None)
+        if getattr(config, "use_recency_weights", True)
+        else None
+    )
 
-    mlp_search = tune_mlp(data.mlp.X_train_processed, data.y_train, config, tscv)
-    xgb_search = tune_xgboost(data.xgb.X_train, data.y_train, config, tscv)
-    catboost_search = tune_catboost(data.catboost.X_train, data.y_train, config, tscv)
+    mlp_search = tune_mlp(data.mlp.X_train_processed, data.y_train, config, tscv, sample_weight=sw)
+    xgb_search = tune_xgboost(data.xgb.X_train, data.y_train, config, tscv, sample_weight=None)
+    catboost_search = tune_catboost(data.catboost.X_train, data.y_train, config, tscv, sample_weight=None)
 
     lr_search = None
     if getattr(config, "include_logistic_regression", False):
@@ -390,7 +431,7 @@ def tune_base_models(
     else:
         logger.info("      [Pruning] Binary Logistic Regression is disabled (0.00% ensemble contribution).")
 
-    logger.info("      Applying leak-free calibration model selection (Platt vs. Beta)...")
+    logger.info("      Applying leak-free calibration model selection (Platt vs. Beta vs. Spline)...")
     mlp_cal, xgb_cal, cb_cal, lr_cal, cal_report = calibrate_best_models(
         mlp_estimator=mlp_search.best_estimator_,
         xgb_estimator=xgb_search.best_estimator_,
@@ -399,6 +440,7 @@ def tune_base_models(
         data=data,
         tscv=tscv,
         config=config,
+        sample_weight=sw,
     )
 
     save_tuning_results(mlp_search, xgb_search, catboost_search, lr_search, cal_report, output_dir)

@@ -18,6 +18,8 @@ from sklearn.model_selection import TimeSeriesSplit
 from training.calibration import (
     BetaCalibratedClassifier,
     BetaCalibrator,
+    SplineCalibratedClassifier,
+    SplineCalibrator,
     calibrate_estimator_with_model_selection,
     generate_oof_predictions,
 )
@@ -90,13 +92,61 @@ def test_calibrate_estimator_with_model_selection():
         tscv=tscv,
     )
 
-    assert metadata["method"] in ["platt", "beta"]
+    assert metadata["method"] in ["platt", "beta", "spline"]
     assert "selected_log_loss" in metadata
     assert "params" in metadata
 
     probs = calibrated_model.predict_proba(X)
     assert probs.shape == (120, 2)
     assert np.allclose(np.sum(probs, axis=1), 1.0)
+
+
+def test_spline_calibrator_monotonicity_and_bounds():
+    """Ensures that fitted SplineCalibrator produces monotonic probabilities bounded in [0, 1]."""
+    np.random.seed(42)
+    p_raw = np.random.uniform(0.05, 0.95, 200)
+    y = (p_raw > 0.5).astype(int)
+
+    calibrator = SplineCalibrator(n_knots=8)
+    calibrator.fit_from_probabilities(p_raw, y)
+
+    assert calibrator.is_fitted_
+    probs = calibrator.predict_proba(p_raw)
+    assert probs.shape == (200, 2)
+    assert np.allclose(np.sum(probs, axis=1), 1.0)
+    assert np.all(probs >= 0.0) and np.all(probs <= 1.0)
+
+    # Test monotonicity on a dense sorted grid
+    grid = np.linspace(0.05, 0.95, 100)
+    grid_probs = calibrator.predict_proba(grid)[:, 1]
+    assert np.all(np.diff(grid_probs) >= -1e-6)
+
+
+def test_spline_calibrated_classifier_sklearn_contract():
+    """Validates that SplineCalibratedClassifier follows standard scikit-learn estimator protocols."""
+    np.random.seed(42)
+    X = np.random.randn(100, 4)
+    y = (X[:, 0] + X[:, 1] > 0).astype(int)
+
+    base = LogisticRegression()
+    clf = SplineCalibratedClassifier(base_estimator=base, cv=TimeSeriesSplit(n_splits=3))
+    clf.fit(X, y)
+
+    assert clf.is_fitted_
+    assert hasattr(clf, "classes_")
+    assert len(clf.classes_) == 2
+
+    probs = clf.predict_proba(X)
+    assert probs.shape == (100, 2)
+    assert np.allclose(np.sum(probs, axis=1), 1.0)
+
+    preds = clf.predict(X)
+    assert preds.shape == (100,)
+    assert set(np.unique(preds)).issubset({0, 1})
+
+    # Test unwrapping
+    unwrapped = unwrap_base_estimator(clf)
+    assert isinstance(unwrapped, LogisticRegression)
 
 
 def test_generate_oof_predictions_chronological_splits():

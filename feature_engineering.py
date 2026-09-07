@@ -25,12 +25,15 @@ DATA_DIR = Path(__file__).resolve().parent / "data"
 
 # Rolling feature parameters
 ROLLING_WINDOW = 8
-EWMA_SPANS = (3, 5, 10)
+EWMA_SPANS = (5, 10)
 
 # Elo parameters
 INITIAL_ELO = 1500
 ELO_K_FACTOR = 20
 ELO_DIVISOR = 400
+ELO_EARLY_SEASON_BOOST = 0.3
+ELO_EARLY_SEASON_HALF_LIFE = 8.0
+HOME_COURT_ADVANTAGE_ELO = 70.0
 
 # Basketball constants
 POSSESSION_FT_WEIGHT = 0.44
@@ -191,11 +194,6 @@ def add_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
     df['ROLLING_OFF_RATING'] = (df[f'ROLLING_PTS_{ROLLING_WINDOW}'] / df[f'ROLLING_POSS_{ROLLING_WINDOW}']) * 100
     df['ROLLING_OFF_RATING'] = df['ROLLING_OFF_RATING'].fillna(DEFAULT_OFF_RATING)
 
-    df["OFF_RATING_EWMA_3"] = (
-        team_groups["ROLLING_OFF_RATING"]
-        .transform(lambda x: ewma(x, span=3))
-    )
-
     df["OFF_RATING_EWMA_5"] = (
         team_groups["ROLLING_OFF_RATING"]
         .transform(lambda x: ewma(x, span=5))
@@ -236,12 +234,6 @@ def add_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
     df[f'SOS_ROLLING_{ROLLING_WINDOW}'] = (
         team_groups["OPP_PRE_GAME_STRENGTH"]
         .transform(rolling_mean)
-        .fillna(0)
-    )
-
-    df["SOS_EWMA_3"] = (
-        team_groups["OPP_PRE_GAME_STRENGTH"]
-        .transform(lambda x: ewma(x, span=3))
         .fillna(0)
     )
 
@@ -309,8 +301,9 @@ def add_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def simulate_elo(df: pd.DataFrame) -> pd.DataFrame:
-    """Simulates a continuous Elo rating timeline using pure Python iterations for speed."""
+    """Simulates a continuous Elo timeline with sample-size dynamic updates."""
     current_elo = {}
+    season_games = {}
     pre_game_elo_records = []
 
     # Vectorized extraction of home and away match pairs (100x faster than df.groupby)
@@ -337,10 +330,13 @@ def simulate_elo(df: pd.DataFrame) -> pd.DataFrame:
         if last_season is not None and season is not None and season != last_season:
             for team in current_elo:
                 current_elo[team] = (current_elo[team] * 0.75) + (INITIAL_ELO * 0.25)
+            season_games.clear()
         last_season = season
 
-        if h_team not in current_elo: current_elo[h_team] = INITIAL_ELO
-        if a_team not in current_elo: current_elo[a_team] = INITIAL_ELO
+        if h_team not in current_elo:
+            current_elo[h_team] = INITIAL_ELO
+        if a_team not in current_elo:
+            current_elo[a_team] = INITIAL_ELO
 
         home_elo_pre = current_elo[h_team]
         away_elo_pre = current_elo[a_team]
@@ -348,19 +344,26 @@ def simulate_elo(df: pd.DataFrame) -> pd.DataFrame:
         pre_game_elo_records.append((game_id, h_team, home_elo_pre))
         pre_game_elo_records.append((game_id, a_team, away_elo_pre))
 
-        elo_diff = home_elo_pre - away_elo_pre
+        n_h = season_games.get(h_team, 0)
+        n_a = season_games.get(a_team, 0)
+
+        elo_diff = (home_elo_pre + HOME_COURT_ADVANTAGE_ELO) - away_elo_pre
         home_prob = 1.0 / (1.0 + 10.0 ** (-elo_diff / ELO_DIVISOR))
         home_won = 1 if h_pts > a_pts else 0
 
         mov = abs(h_pts - a_pts)
-        winner_elo = home_elo_pre if home_won == 1 else away_elo_pre
-        loser_elo = away_elo_pre if home_won == 1 else home_elo_pre
+        winner_elo = (home_elo_pre + HOME_COURT_ADVANTAGE_ELO) if home_won == 1 else away_elo_pre
+        loser_elo = away_elo_pre if home_won == 1 else (home_elo_pre + HOME_COURT_ADVANTAGE_ELO)
         mov_multiplier = np.log(mov + 1) * (2.2 / (((winner_elo - loser_elo) * 0.001) + 2.2))
 
-        elo_change = ELO_K_FACTOR * mov_multiplier * (home_won - home_prob)
+        k_h = ELO_K_FACTOR * (1.0 + ELO_EARLY_SEASON_BOOST * np.exp(-n_h / ELO_EARLY_SEASON_HALF_LIFE))
+        k_a = ELO_K_FACTOR * (1.0 + ELO_EARLY_SEASON_BOOST * np.exp(-n_a / ELO_EARLY_SEASON_HALF_LIFE))
 
-        current_elo[h_team] = home_elo_pre + elo_change
-        current_elo[a_team] = away_elo_pre - elo_change
+        current_elo[h_team] = home_elo_pre + k_h * mov_multiplier * (home_won - home_prob)
+        current_elo[a_team] = away_elo_pre - k_a * mov_multiplier * (home_won - home_prob)
+
+        season_games[h_team] = n_h + 1
+        season_games[a_team] = n_a + 1
 
     elo_df = pd.DataFrame(pre_game_elo_records, columns=["GAME_ID", "TEAM_ABBREVIATION", "PRE_GAME_ELO"])
     df = df.merge(elo_df, on=["GAME_ID", "TEAM_ABBREVIATION"], how="left")
