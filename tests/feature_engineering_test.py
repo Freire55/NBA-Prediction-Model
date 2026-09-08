@@ -513,3 +513,140 @@ def test_bpm_proxy_calculation_and_directions():
     # Defensive anchor has higher DBPM than offensive creator
     assert dbpm.iloc[1] > dbpm.iloc[0]
     assert dbpm.iloc[1] > 100.0
+
+
+def test_opponent_3pt_variance_neutralization():
+    """
+    Verifies opponent 3PT variance neutralization:
+    1. Regresses high/low opponent 3PT% 50% toward the league average (36.0%).
+    2. Enforces strict chronological lag (game 0 pre-game stats use prior/neutral defaults).
+    3. Correctly calculates volume attempt rate (OPP_3PA_RATE).
+    """
+    dates = pd.date_range("2023-01-01", periods=3, freq="2D")
+    rows = []
+    # G0: LAL opponent (GSW) shoots 15/30 from three (50.0%)
+    rows.append({
+        "GAME_ID": "G0", "TEAM_ABBREVIATION": "LAL", "GAME_DATE": dates[0], "MATCHUP": "LAL vs. GSW",
+        "PTS": 110.0, "FGM": 40.0, "FGA": 85.0, "FG3M": 10.0, "FG3A": 25.0, "FTA": 20.0, "OREB": 10.0, "TOV": 12.0,
+    })
+    rows.append({
+        "GAME_ID": "G0", "TEAM_ABBREVIATION": "GSW", "GAME_DATE": dates[0], "MATCHUP": "GSW @ LAL",
+        "PTS": 115.0, "FGM": 42.0, "FGA": 85.0, "FG3M": 15.0, "FG3A": 30.0, "FTA": 16.0, "OREB": 8.0, "TOV": 14.0,
+    })
+    # G1: LAL opponent (GSW) shoots 6/30 from three (20.0%)
+    rows.append({
+        "GAME_ID": "G1", "TEAM_ABBREVIATION": "LAL", "GAME_DATE": dates[1], "MATCHUP": "LAL vs. GSW",
+        "PTS": 105.0, "FGM": 39.0, "FGA": 85.0, "FG3M": 8.0, "FG3A": 24.0, "FTA": 19.0, "OREB": 9.0, "TOV": 11.0,
+    })
+    rows.append({
+        "GAME_ID": "G1", "TEAM_ABBREVIATION": "GSW", "GAME_DATE": dates[1], "MATCHUP": "GSW @ LAL",
+        "PTS": 95.0, "FGM": 35.0, "FGA": 85.0, "FG3M": 6.0, "FG3A": 30.0, "FTA": 19.0, "OREB": 7.0, "TOV": 15.0,
+    })
+    # G2
+    rows.append({
+        "GAME_ID": "G2", "TEAM_ABBREVIATION": "LAL", "GAME_DATE": dates[2], "MATCHUP": "LAL vs. GSW",
+        "PTS": 100.0, "FGM": 38.0, "FGA": 85.0, "FG3M": 9.0, "FG3A": 25.0, "FTA": 15.0, "OREB": 10.0, "TOV": 10.0,
+    })
+    rows.append({
+        "GAME_ID": "G2", "TEAM_ABBREVIATION": "GSW", "GAME_DATE": dates[2], "MATCHUP": "GSW @ LAL",
+        "PTS": 100.0, "FGM": 38.0, "FGA": 85.0, "FG3M": 9.0, "FG3A": 25.0, "FTA": 15.0, "OREB": 10.0, "TOV": 10.0,
+    })
+
+    df = pd.DataFrame(rows)
+    df = add_rolling_features(df)
+
+    lal_games = df[df["TEAM_ABBREVIATION"] == "LAL"].sort_values("GAME_DATE").reset_index(drop=True)
+
+    # In Game 1, LAL's prior opponent was GSW in G0 who shot 15/30 = 50.0%
+    # Neutralized D_3PT_TRUE = 0.5 * 0.50 + 0.5 * 0.36 = 0.430
+    assert lal_games.loc[1, "D_3PT_ACTUAL"] == pytest.approx(0.50, abs=1e-3)
+    assert lal_games.loc[1, "D_3PT_TRUE"] == pytest.approx(0.430, abs=1e-3)
+
+    # In Game 2, prior games had 15+6 = 21 makes on 30+30 = 60 attempts = 35.0%
+    # Neutralized D_3PT_TRUE = 0.5 * 0.35 + 0.5 * 0.36 = 0.355
+    assert lal_games.loc[2, "D_3PT_ACTUAL"] == pytest.approx(0.350, abs=1e-3)
+    assert lal_games.loc[2, "D_3PT_TRUE"] == pytest.approx(0.355, abs=1e-3)
+
+
+def test_circadian_fatigue_and_travel_index():
+    """
+    Verifies the Circadian Fatigue Index:
+    1. Distance calculation for coast-to-coast road trip (MIA to POR > 2,500 miles).
+    2. Eastward jet lag penalty when traveling West-to-East (losing hours).
+    3. Back-to-back and schedule density compounding fatigue.
+    """
+    # G0: LAL at home vs GSW (Jan 1)
+    # G1: LAL travels to MIA on back-to-back (Jan 2: West to East, crossing 3 time zones)
+    df = pd.DataFrame([
+        {
+            "GAME_ID": "G0", "TEAM_ABBREVIATION": "LAL", "GAME_DATE": pd.to_datetime("2023-01-01"),
+            "MATCHUP": "LAL vs. GSW", "PTS": 110.0,
+        },
+        {
+            "GAME_ID": "G1", "TEAM_ABBREVIATION": "LAL", "GAME_DATE": pd.to_datetime("2023-01-02"),
+            "MATCHUP": "LAL @ MIA", "PTS": 105.0,
+        },
+    ])
+
+    result = add_schedule_features(df)
+    lal = result[result["TEAM_ABBREVIATION"] == "LAL"].sort_values("GAME_DATE").reset_index(drop=True)
+
+    # In Game 0, LAL is at home (0 travel)
+    assert lal.loc[0, "TRAVEL_7D"] == 0.0
+    assert lal.loc[0, "TZ_EASTWARD_LOSS"] == 0.0
+
+    # In Game 1, LAL travels from LA to Miami (> 2,300 miles) on B2B
+    assert lal.loc[1, "TRAVEL_7D"] > 2300.0
+    assert lal.loc[1, "B2B"] == 1
+    # West (-8) to East (-5) loses 3 hours
+    assert lal.loc[1, "TZ_EASTWARD_LOSS"] == pytest.approx(3.0)
+    # Circadian fatigue index should be substantially elevated (> 4.0)
+    assert lal.loc[1, "CIRCADIAN_FATIGUE_INDEX"] > 4.0
+
+
+def test_tactical_clash_matrix_interactions():
+    """
+    Verifies the non-transitive tactical clash matrix:
+    1. Turnover pressure exploits turnover vulnerability.
+    2. Free throw pressure exploits high defensive foul rates.
+    3. 3PT shooting exploits open perimeter concessions.
+    4. Composite tactical clash advantage reflects directional stylistic edge.
+    """
+    from feature_engineering import add_tactical_clash_matrix
+
+    matchup_df = pd.DataFrame([{
+        "HOME_DEF_TOV_RATE": 0.18,
+        "AWAY_DEF_TOV_RATE": 0.11,
+        "HOME_FOUR_FACTOR_TOV_ROLLING_8": 0.11,
+        "AWAY_FOUR_FACTOR_TOV_ROLLING_8": 0.18,
+        "HOME_FOUR_FACTOR_OREB_ROLLING_8": 0.32,
+        "AWAY_FOUR_FACTOR_OREB_ROLLING_8": 0.20,
+        "HOME_ROLLING_PACE_8": 96.0,
+        "AWAY_ROLLING_PACE_8": 104.0,
+        "HOME_FOUR_FACTOR_FTR_ROLLING_8": 0.28,
+        "AWAY_FOUR_FACTOR_FTR_ROLLING_8": 0.18,
+        "HOME_DEF_FTR": 0.18,
+        "AWAY_DEF_FTR": 0.28,
+        "HOME_OPP_3PA_RATE": 0.30,
+        "AWAY_OPP_3PA_RATE": 0.42,
+        "HOME_FOUR_FACTOR_EFG_ROLLING_8": 0.56,
+        "AWAY_FOUR_FACTOR_EFG_ROLLING_8": 0.50,
+        "HOME_DEF_REB_RATE": 0.78,
+        "AWAY_DEF_REB_RATE": 0.70,
+    }])
+
+    result = add_tactical_clash_matrix(matchup_df)
+
+    # Home forces 18% TOV on an 18% TOV prone opponent (0.18 * 0.18 = 0.0324)
+    # Away forces 11% TOV on an 11% secure opponent (0.11 * 0.11 = 0.0121)
+    assert result.loc[0, "HOME_TURNOVER_PRESSURE_CLASH"] > result.loc[0, "AWAY_TURNOVER_PRESSURE_CLASH"]
+    assert result.loc[0, "DELTA_TURNOVER_PRESSURE_CLASH"] > 0.015
+
+    # Home draws fouls against high-fouling Away defense
+    assert result.loc[0, "DELTA_FTR_CLASH"] > 0.0
+
+    # Home elite shooting exploits Away high 3PA allowance
+    assert result.loc[0, "DELTA_3PT_EXPLOITATION"] > 0.0
+
+    # Composite tactical clash advantage is strongly positive for Home
+    assert result.loc[0, "DELTA_TACTICAL_CLASH_ADVANTAGE"] > 0.0

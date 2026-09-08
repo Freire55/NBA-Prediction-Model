@@ -160,8 +160,8 @@ class TrainingConfig:
     # Dataset Splits
     # ======================================================
 
-    train_end: str = "22018"
-    validation_end: str = "22020"
+    train_end: str = "22020"
+    validation_end: str = "22021"
 
     # Exponential recency sample weighting
     use_recency_weights: bool = True
@@ -228,15 +228,57 @@ class TrainingConfig:
         }
     )
 
-    # Base structural features always removed across architectures
+    # Base structural and empirically redundant features pruned across architectures
     features_to_remove: dict[str, list[str]] = field(
         default_factory=lambda: {
             "mlp": [
+                # Base structural & rolling duplicates
                 "DELTA_ROLLING_PACE",
                 "DELTA_Z_FTA_ROLLING_8",
                 "DELTA_Z_FGM_ROLLING_8",
+                # Exact affine & mathematical duplicates (r = 1.0000)
+                "DELTA_D_3PT_ACTUAL",
+                "DELTA_FATIGUE_IMPORTANCE_5_STD",
+                "DELTA_FATIGUE_IMPORTANCE_5_SUM",
+                "DELTA_FATIGUE_IMPORTANCE_5_MAX",
+                "DELTA_FOUR_FACTORS_NET_EFG",
+                "DELTA_ACTIVE_ROSTER_TOP_3_SHARE",
+                "DELTA_ROAD_TRIP_LENGTH",
+                # Redundant embedding sums (r > 0.98 with mean)
+                "EMBED_DELTA_1_SUM",
+                "EMBED_DELTA_2_SUM",
+                "EMBED_DELTA_3_SUM",
+                "EMBED_DELTA_4_SUM",
+                "EMBED_DELTA_5_SUM",
+                "EMBED_DELTA_6_SUM",
+                "EMBED_DELTA_7_SUM",
+                "EMBED_DELTA_8_SUM",
+                # Features with negative / noise permutation importance for MLP dense layers
+                "DELTA_Z_TOV_ROLLING_8",
+                "AWAY_B2B",
+                "EMBED_RAW_DELTA_4_MAX",
+                "DELTA_Z_FGM_EWMA_10",
+                "DELTA_Z_FG3M_ROLLING_8",
+                "DELTA_NET_RATING_EWMA_5",
+                "EMBED_RAW_DELTA_3_STD",
+                "DELTA_REBOUND_PACE_CLASH",
+                "DELTA_OPP_3PA_RATE",
+                "DELTA_Z_FT_PCT_EWMA_5",
+                "DELTA_Z_FG_PCT_EWMA_10",
+                "DELTA_TURNOVER_PRESSURE_CLASH",
+                "DELTA_Z_FG3A_ROLLING_8",
+                "EMBED_DELTA_6_MEAN",
+                "DELTA_Z_FGA_ROLLING_8",
+                "DELTA_TRAVEL_7D",
+                "DELTA_D_3PT_TRUE",
+                "DELTA_Z_FG_PCT_EWMA_5",
+                "DELTA_Z_FTA_EWMA_10",
+                "DELTA_FOUR_FACTOR_TOV_ROLLING_8",
+                "EMBED_DELTA_8_MEAN",
+                "SEASON_YEAR",
             ],
             "xgb": [
+                # Base metadata / structural removals
                 "HOME_IS_AWAY",
                 "AWAY_IS_AWAY",
                 "HOME_VIDEO_AVAILABLE",
@@ -250,12 +292,176 @@ class TrainingConfig:
                 "AWAY_ROLLING_PACE",
                 "HOME_ROAD_TRIP_LENGTH",
                 "HOME_4_IN_5",
+                # Zero-variance constant
+                "HOME_ALTITUDE_FATIGUE_IMPACT",
+                # Exact affine duplicates (r = 1.0000)
+                "HOME_D_3PT_ACTUAL",
+                "AWAY_D_3PT_ACTUAL",
+                "HOME_FATIGUE_IMPORTANCE_5_STD",
+                "HOME_FATIGUE_IMPORTANCE_5_SUM",
+                "HOME_FATIGUE_IMPORTANCE_5_MAX",
+                "AWAY_FATIGUE_IMPORTANCE_5_STD",
+                "AWAY_FATIGUE_IMPORTANCE_5_SUM",
+                "AWAY_FATIGUE_IMPORTANCE_5_MAX",
+                # Near-exact collinear duplicates (r >= 0.98)
+                "HOME_ACTIVE_ROSTER_TOP_3_SHARE",
+                "AWAY_ACTIVE_ROSTER_TOP_3_SHARE",
+                "AWAY_TZ_EASTWARD_LOSS",
+                "HOME_4_IN_6",
+                "HOME_OFF_RATING_EWMA_10",
+                "AWAY_OFF_RATING_EWMA_10",
+                "AWAY_OPP_3PA_RATE",
+                "AWAY_OPP_3PA_RATE_EWMA_10",
+                "HOME_OPP_PRE_GAME_STRENGTH",
+                "AWAY_OPP_PRE_GAME_STRENGTH",
+                "EMBED_DELTA_1_SUM",
+                "EMBED_DELTA_2_SUM",
+                "EMBED_DELTA_3_SUM",
+                "EMBED_DELTA_4_SUM",
+                "EMBED_DELTA_5_SUM",
+                "EMBED_DELTA_6_SUM",
+                "EMBED_DELTA_7_SUM",
+                "EMBED_DELTA_8_SUM",
+            ],
+            "catboost": [
+                # Base metadata / structural removals & zero-variance
+                "HOME_IS_AWAY",
+                "AWAY_IS_AWAY",
+                "HOME_VIDEO_AVAILABLE",
+                "AWAY_VIDEO_AVAILABLE",
+                "HOME_AWAY_GROUP",
+                "AWAY_AWAY_GROUP",
+                "AWAY_SEASON_ID",
+                "HOME_SEASON_YEAR",
+                "AWAY_SEASON_YEAR",
+                "HOME_ROLLING_PACE",
+                "AWAY_ROLLING_PACE",
+                "HOME_ROAD_TRIP_LENGTH",
+                "HOME_4_IN_5",
+                "HOME_ALTITUDE_FATIGUE_IMPACT",
+                # Exact affine duplicates (r = 1.0000)
+                "HOME_D_3PT_ACTUAL",
+                "AWAY_D_3PT_ACTUAL",
+                "HOME_FATIGUE_IMPORTANCE_5_STD",
+                "HOME_FATIGUE_IMPORTANCE_5_SUM",
+                "HOME_FATIGUE_IMPORTANCE_5_MAX",
+                "AWAY_FATIGUE_IMPORTANCE_5_STD",
+                "AWAY_FATIGUE_IMPORTANCE_5_SUM",
+                "AWAY_FATIGUE_IMPORTANCE_5_MAX",
+                # Near-exact collinear duplicates (r >= 0.98)
+                "HOME_ACTIVE_ROSTER_TOP_3_SHARE",
+                "AWAY_ACTIVE_ROSTER_TOP_3_SHARE",
+                "AWAY_TZ_EASTWARD_LOSS",
+                "HOME_4_IN_6",
+                "HOME_OFF_RATING_EWMA_10",
+                "AWAY_OFF_RATING_EWMA_10",
+                "AWAY_OPP_3PA_RATE",
+                "AWAY_OPP_3PA_RATE_EWMA_10",
+                "HOME_OPP_PRE_GAME_STRENGTH",
+                "AWAY_OPP_PRE_GAME_STRENGTH",
+                "EMBED_DELTA_1_SUM",
+                "EMBED_DELTA_2_SUM",
+                "EMBED_DELTA_3_SUM",
+                "EMBED_DELTA_4_SUM",
+                "EMBED_DELTA_5_SUM",
+                "EMBED_DELTA_6_SUM",
+                "EMBED_DELTA_7_SUM",
+                "EMBED_DELTA_8_SUM",
+                # Zero-importance features specific to CatBoost oblivious trees
+                "HOME_DEF_FTR",
+                "HOME_DEF_REB_RATE",
+                "AWAY_DEF_FTR",
+                "AWAY_DEF_TOV_RATE",
+                "AWAY_D_3PT_TRUE",
+                "AWAY_D_3PT_TRUE_EWMA_10",
+                "AWAY_D_3PT_TRUE_EWMA_5",
+                "AWAY_FOUR_FACTOR_EFG_EWMA_10",
+                "HOME_FOUR_FACTOR_EFG_ROLLING_8",
+                "AWAY_FOUR_FACTOR_OREB_EWMA_10",
+                "AWAY_FOUR_FACTOR_OREB_EWMA_5",
+                "AWAY_FOUR_FACTOR_FTR_EWMA_10",
+                "AWAY_FOUR_FACTOR_FTR_EWMA_5",
+                "AWAY_FOUR_FACTOR_TOV_ROLLING_8",
+                "HOME_FOUR_FACTOR_TOV_EWMA_10",
+                "HOME_ROLLING_OFF_RATING",
+                "AWAY_ROLLING_PTS_8",
+                "HOME_ROLLING_PTS_8",
+                "HOME_3_IN_4",
+                "AWAY_3_IN_4",
+                "AWAY_4_IN_6",
+                "AWAY_ALTITUDE",
+                "HOME_B2B",
+                "HOME_CIRCADIAN_FATIGUE_INDEX",
+                "HOME_FATIGUE_EWMA_MINUTES_10_MAX",
+                "HOME_FATIGUE_EWMA_MINUTES_5_MAX",
+                "HOME_FATIGUE_IMPORTANCE_10_MAX",
+                "HOME_FATIGUE_IMPORTANCE_10_STD",
+                "HOME_FATIGUE_SURGE_MAX",
+                "HOME_TRAVEL_7D",
+                "AWAY_ACTIVE_ROSTER_EXPECTED_DBPM",
+                "AWAY_ACTIVE_ROSTER_EXPECTED_OREB",
+                "AWAY_ACTIVE_ROSTER_EXPECTED_TOV",
+                "AWAY_ACTIVE_ROSTER_ROBUST_FORM_MAX",
+                "AWAY_ACTIVE_ROSTER_ROBUST_FORM_SUM",
+                "AWAY_PLAYMAKER_CONCENTRATION_RATIO",
+                "AWAY_ROLLING_TOP_2_SHARE_10",
+                "AWAY_SPACING_GRAVITY_INDEX",
+                "HOME_ACTIVE_ROSTER_EXPECTED_EFG",
+                "HOME_ACTIVE_ROSTER_EXPECTED_NET_BPM",
+                "HOME_ACTIVE_ROSTER_STAR_SHARE",
+                "HOME_ACTIVE_ROSTER_TOP_2_SHARE",
+                "HOME_PLAYMAKER_CONCENTRATION_RATIO",
+                "HOME_SPACING_GRAVITY_INDEX",
+                "AWAY_GLASS_DOMINANCE",
+                "AWAY_TURNOVER_PRESSURE_CLASH",
+                "AWAY_REBOUND_PACE_CLASH",
+                "AWAY_SOS_EWMA_5",
+                "AWAY_SOS_ROLLING_8",
+                "HOME_SOS_EWMA_5",
+                "HOME_SOS_ROLLING_8",
+                "EMBED_DELTA_2_STD",
+                "EMBED_DELTA_3_STD",
+                "EMBED_DELTA_5_MEAN",
+                "EMBED_DELTA_6_MAX",
+                "EMBED_DELTA_6_MEAN",
+                "EMBED_DELTA_6_STD",
+                "EMBED_DELTA_7_MAX",
+                "EMBED_DELTA_7_MEAN",
+                "EMBED_DELTA_7_STD",
+                "EMBED_DELTA_8_MAX",
+                "EMBED_RAW_DELTA_2_MAX",
+                "EMBED_RAW_DELTA_2_STD",
+                "EMBED_RAW_DELTA_4_STD",
+                "EMBED_RAW_DELTA_5_STD",
+                "EMBED_RAW_DELTA_6_MAX",
+                "EMBED_RAW_DELTA_6_STD",
+                "EMBED_RAW_DELTA_7_MAX",
+                "EMBED_RAW_DELTA_7_STD",
+                "EMBED_RAW_DELTA_8_STD",
+            ],
+            "margin": [
+                "DELTA_ROLLING_PACE",
+                "DELTA_D_3PT_ACTUAL",
+                "DELTA_FATIGUE_IMPORTANCE_5_STD",
+                "DELTA_FATIGUE_IMPORTANCE_5_SUM",
+                "DELTA_FATIGUE_IMPORTANCE_5_MAX",
+                "DELTA_FOUR_FACTORS_NET_EFG",
+                "DELTA_ACTIVE_ROSTER_TOP_3_SHARE",
+                "DELTA_ROAD_TRIP_LENGTH",
             ],
             "lr": [
                 "DELTA_ROLLING_PACE",
+                "DELTA_D_3PT_ACTUAL",
+                "DELTA_FATIGUE_IMPORTANCE_5_STD",
+                "DELTA_FATIGUE_IMPORTANCE_5_SUM",
+                "DELTA_FATIGUE_IMPORTANCE_5_MAX",
+                "DELTA_FOUR_FACTORS_NET_EFG",
+                "DELTA_ACTIVE_ROSTER_TOP_3_SHARE",
+                "DELTA_ROAD_TRIP_LENGTH",
             ],
         }
     )
+
 
     # ======================================================
     # General Machine Learning
@@ -269,6 +475,7 @@ class TrainingConfig:
     # ======================================================
 
     include_logistic_regression: bool = False
+    ensemble_shrinkage: float = 0.05
     use_halving_search: bool = True
     halving_factor: int = 2
     early_stopping_rounds: int = 25
@@ -375,7 +582,7 @@ class TrainingConfig:
             self.features_to_remove["catboost"] = list(self.features_to_remove.get("xgb", []))
 
         if self.prune_optimized_features:
-            for m in ["mlp", "xgb", "lr", "catboost"]:
+            for m in ["mlp", "xgb", "lr", "catboost", "margin"]:
                 existing = set(self.features_to_remove.get(m, []))
                 for feat in self.optimized_features_to_remove.get(m, []):
                     if feat not in existing:

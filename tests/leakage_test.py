@@ -94,7 +94,7 @@ def test_perturbation_leakage_invariance():
 
     cols_to_check = [
         col for col in df_feat_orig.columns
-        if "ROLLING_" in col or "_EWMA_" in col
+        if "ROLLING_" in col or "_EWMA_" in col or "D_3PT_" in col or "OPP_3PA_" in col
     ]
     for col in cols_to_check:
         orig_val = lal_orig_g3[col]

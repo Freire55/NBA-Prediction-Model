@@ -96,14 +96,11 @@ def save_model_artifacts(artifacts: TrainingArtifacts) -> None:
         "mlp_model.pkl": artifacts.mlp.final_model,
         "xgb_model.pkl": artifacts.xgb.final_model,
         "catboost_model.pkl": artifacts.catboost.final_model,
-        "lr_model.pkl": artifacts.lr.final_model,
         "mlp_scaler.pkl": artifacts.mlp.feature_set.scaler,
-        "lr_scaler.pkl": artifacts.lr.feature_set.scaler,
         "ensemble_weights.pkl": artifacts.ensemble_weights,
         "mlp_features.pkl": artifacts.data.summary.mlp_feature_names,
         "xgb_features.pkl": artifacts.data.summary.xgb_feature_names,
         "catboost_features.pkl": artifacts.data.summary.catboost_feature_names,
-        "lr_features.pkl": artifacts.data.summary.lr_feature_names,
     }
 
     if artifacts.margin.final_model is not None:
@@ -169,7 +166,6 @@ def print_completion_summary(logger: logging.Logger, output_dir: Path) -> None:
         "04_confusion_matrix.png",
         "05_xgb_feature_importance.png",
         "06_mlp_feature_importance.png",
-        "07_lr_coefficients.png",
         "08_xgb_shap_summary.png",
         "09_margin_coefficients.png",
         "10_margin_residuals.png",
@@ -187,8 +183,6 @@ def run_stage_data_prep(artifacts: TrainingArtifacts, data_dir: Path, config: Tr
     with PipelineStage(1, TOTAL_PIPELINE_STAGES, "Data preparation & scaling"):
         artifacts.data = load_and_prep_data(data_dir, config)
         scale_features(artifacts.data.mlp)
-        if getattr(config, "include_logistic_regression", False):
-            scale_features(artifacts.data.lr)
         if artifacts.data.margin is not None:
             scale_features(artifacts.data.margin)
 
@@ -215,10 +209,11 @@ def run_stage_ensemble(artifacts: TrainingArtifacts) -> Dict[str, float]:
         weights, formula = learn_ensemble_weights(
             mlp=artifacts.mlp,
             xgb=artifacts.xgb,
-            lr=artifacts.lr,
+            lr=None,
             y_val=artifacts.data.y_val,
             catboost=artifacts.catboost,
             margin=artifacts.margin,
+            shrinkage_lambda=getattr(artifacts.config, "ensemble_shrinkage", 0.05),
         )
         artifacts.ensemble_weights = weights
         artifacts.ensemble_formula = formula

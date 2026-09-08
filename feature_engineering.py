@@ -39,11 +39,63 @@ HOME_COURT_ADVANTAGE_ELO = 70.0
 POSSESSION_FT_WEIGHT = 0.44
 DEFAULT_REST_DAYS = 5.0
 DEFAULT_OFF_RATING = 100.0
+LEAGUE_AVERAGE_3PT_PCT = 0.360
+OPP_3PT_VARIANCE_REGRESSION_WEIGHT = 0.50
 
 # Altitude parameters
 ALTITUDE_FILE = DATA_DIR / "team_altitudes.csv"
 ALTITUDE_THRESHOLD_FT = 1000.0
 ALTITUDE_SCALE_FT = 2500.0
+
+# Team coordinates (lat, lon) and standard UTC timezone offsets for circadian fatigue
+TEAM_COORDINATES_AND_TZ: dict[str, tuple[float, float, float]] = {
+    "ATL": (33.7573, -84.3963, -5.0),
+    "BKN": (40.6826, -73.9754, -5.0),
+    "BOS": (42.3662, -71.0621, -5.0),
+    "CHA": (35.2251, -80.8392, -5.0),
+    "CHH": (35.2251, -80.8392, -5.0),
+    "CHI": (41.8807, -87.6742, -6.0),
+    "CLE": (41.4965, -81.6882, -5.0),
+    "DAL": (32.7905, -96.8103, -6.0),
+    "DEN": (39.7487, -105.0076, -7.0),
+    "DET": (42.3411, -83.0553, -5.0),
+    "GSW": (37.7680, -122.3877, -8.0),
+    "HOU": (29.7508, -95.3621, -6.0),
+    "IND": (39.7640, -86.1555, -5.0),
+    "LAC": (33.9450, -118.3418, -8.0),
+    "LAL": (34.0430, -118.2673, -8.0),
+    "MEM": (35.1382, -90.0505, -6.0),
+    "MIA": (25.7814, -80.1870, -5.0),
+    "MIL": (43.0451, -87.9174, -6.0),
+    "MIN": (44.9795, -93.2761, -6.0),
+    "NJN": (40.8122, -74.0744, -5.0),
+    "NOH": (29.9490, -90.0821, -6.0),
+    "NOK": (35.4634, -97.5151, -6.0),
+    "NOP": (29.9490, -90.0821, -6.0),
+    "NYK": (40.7505, -73.9934, -5.0),
+    "OKC": (35.4634, -97.5151, -6.0),
+    "ORL": (28.5392, -81.3839, -5.0),
+    "PHI": (39.9012, -75.1720, -5.0),
+    "PHX": (33.4457, -112.0712, -7.0),
+    "POR": (45.5316, -122.6668, -8.0),
+    "SAC": (38.5802, -121.4997, -8.0),
+    "SAS": (29.4270, -98.4375, -6.0),
+    "SEA": (47.6221, -122.3540, -8.0),
+    "TOR": (43.6435, -79.3791, -5.0),
+    "UTA": (40.7683, -111.9011, -7.0),
+    "VAN": (49.2778, -123.1089, -8.0),
+    "WAS": (38.8982, -77.0209, -5.0),
+}
+
+
+def haversine_np(lat1: np.ndarray, lon1: np.ndarray, lat2: np.ndarray, lon2: np.ndarray) -> np.ndarray:
+    """Computes vectorized great-circle distance between coordinates in miles."""
+    r_miles = 3958.8
+    p1, p2 = np.radians(lat1), np.radians(lat2)
+    dp = np.radians(lat2 - lat1)
+    dl = np.radians(lon2 - lon1)
+    a = np.sin(dp / 2.0) ** 2 + np.cos(p1) * np.cos(p2) * np.sin(dl / 2.0) ** 2
+    return r_miles * 2.0 * np.arcsin(np.clip(np.sqrt(a), 0.0, 1.0))
 
 # ======================================================
 # Logging Setup
@@ -124,7 +176,8 @@ def ewma(series: pd.Series, span: int = ROLLING_WINDOW) -> pd.Series:
 
 
 def add_schedule_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Engineers fatigue and schedule density flags."""
+    """Engineers fatigue, schedule density flags, and continuous circadian travel index."""
+    df = df.sort_values(by=['TEAM_ABBREVIATION', 'GAME_DATE']).reset_index(drop=True)
     team_groups = df.groupby('TEAM_ABBREVIATION')
     
     df['PREV_GAME_DATE'] = team_groups['GAME_DATE'].shift(1)
@@ -137,12 +190,76 @@ def add_schedule_features(df: pd.DataFrame) -> pd.DataFrame:
     df['DATE_MINUS_3'] = team_groups['GAME_DATE'].shift(3)
     df['3_IN_4'] = np.where((df['GAME_DATE'] - df['DATE_MINUS_2']).dt.days <= 3, 1, 0)
     df['4_IN_5'] = np.where((df['GAME_DATE'] - df['DATE_MINUS_3']).dt.days <= 4, 1, 0)
+    df['4_IN_6'] = np.where((df['GAME_DATE'] - df['DATE_MINUS_3']).dt.days <= 5, 1, 0)
 
-    # Track road trip exhaustion
-    df['IS_AWAY'] = df['MATCHUP'].str.contains(' @ ').astype(int)
+    # Track road trip exhaustion and venue host team
+    has_matchup = 'MATCHUP' in df.columns
+    if has_matchup:
+        df['IS_AWAY'] = df['MATCHUP'].str.contains(' @ ', na=False).astype(int)
+        away_split = df['MATCHUP'].str.split(' @ ')
+        opp_abbrev = np.where(df['IS_AWAY'] == 1, away_split.str[1], df['TEAM_ABBREVIATION'])
+        host_team = pd.Series(opp_abbrev, index=df.index).str.strip().fillna(df['TEAM_ABBREVIATION'])
+    else:
+        df['IS_AWAY'] = 0
+        host_team = df['TEAM_ABBREVIATION']
+
+    df['HOST_TEAM'] = host_team
     df['AWAY_GROUP'] = (df['IS_AWAY'] != team_groups['IS_AWAY'].shift(1)).cumsum()
     df['ROAD_TRIP_LENGTH'] = np.where(df['IS_AWAY'] == 1, df.groupby(['TEAM_ABBREVIATION', 'AWAY_GROUP']).cumcount() + 1, 0)
+
+    # Circadian travel distance and timezone tracking (strictly pre-game: venue of prior game to venue of this game)
+    prev_host = team_groups['HOST_TEAM'].shift(1).fillna(df['TEAM_ABBREVIATION'])
     
+    default_coord_tz = (39.0, -95.0, -6.0)
+    lat_curr = df['HOST_TEAM'].map(lambda x: TEAM_COORDINATES_AND_TZ.get(x, default_coord_tz)[0]).to_numpy()
+    lon_curr = df['HOST_TEAM'].map(lambda x: TEAM_COORDINATES_AND_TZ.get(x, default_coord_tz)[1]).to_numpy()
+    tz_curr = df['HOST_TEAM'].map(lambda x: TEAM_COORDINATES_AND_TZ.get(x, default_coord_tz)[2]).to_numpy()
+
+    lat_prev = prev_host.map(lambda x: TEAM_COORDINATES_AND_TZ.get(x, default_coord_tz)[0]).to_numpy()
+    lon_prev = prev_host.map(lambda x: TEAM_COORDINATES_AND_TZ.get(x, default_coord_tz)[1]).to_numpy()
+    tz_prev = prev_host.map(lambda x: TEAM_COORDINATES_AND_TZ.get(x, default_coord_tz)[2]).to_numpy()
+
+    same_host = (df['HOST_TEAM'] == prev_host).to_numpy()
+    game_dist = np.where(same_host, 0.0, haversine_np(lat_prev, lon_prev, lat_curr, lon_curr))
+    df['TRAVEL_DIST_GAME'] = game_dist
+
+    # Rolling 7-day cumulative travel distance
+    df_idx = df[['TEAM_ABBREVIATION', 'GAME_DATE', 'TRAVEL_DIST_GAME']].set_index('GAME_DATE')
+    prior_7d = (
+        df_idx.groupby('TEAM_ABBREVIATION')['TRAVEL_DIST_GAME']
+        .rolling('7D', closed='left')
+        .sum()
+        .fillna(0.0)
+        .to_numpy()
+    )
+    df['TRAVEL_7D'] = prior_7d + df['TRAVEL_DIST_GAME']
+
+    # Directional Circadian Jet Lag: West-to-East (tz_curr > tz_prev) loses recovery hours
+    tz_diff = tz_curr - tz_prev
+    df['TZ_EASTWARD_LOSS'] = np.maximum(0.0, tz_diff)
+    df['TZ_CIRCADIAN_PENALTY'] = df['TZ_EASTWARD_LOSS'] * np.where(
+        df['B2B'] == 1, 1.5, np.where(df['REST_DAYS'] <= 2, 1.0, 0.5)
+    )
+
+    # Mile-high altitude acute interaction (DEN @ 5280 ft, UTA @ 4226 ft)
+    altitude_acute_penalty = np.where(
+        (df['HOST_TEAM'].isin(['DEN', 'UTA'])) & (df['IS_AWAY'] == 1) & (df['B2B'] == 1),
+        1.0,
+        0.0,
+    )
+    df['ALTITUDE_FATIGUE_IMPACT'] = altitude_acute_penalty
+
+    # Continuous Circadian Circulatory Fatigue Index
+    df['CIRCADIAN_FATIGUE_INDEX'] = (
+        (df['TRAVEL_7D'] / 1000.0)
+        + 0.8 * df['TZ_CIRCADIAN_PENALTY']
+        + 1.0 * df['B2B']
+        + 0.6 * df['3_IN_4']
+        + 0.5 * df['4_IN_6']
+        + 1.5 * df['ALTITUDE_FATIGUE_IMPACT']
+    )
+
+    df = df.drop(columns=['HOST_TEAM', 'TRAVEL_DIST_GAME'])
     return df
 
 
@@ -186,9 +303,14 @@ def add_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
     df = add_four_factors(df)
     team_groups = df.groupby('TEAM_ABBREVIATION')
     
-    df['POSSESSIONS'] = df['FGA'] + POSSESSION_FT_WEIGHT * df['FTA'] - df['OREB'] + df['TOV']
+    fga = df['FGA'] if 'FGA' in df.columns else pd.Series(85.0, index=df.index)
+    fta = df['FTA'] if 'FTA' in df.columns else pd.Series(20.0, index=df.index)
+    oreb = df['OREB'] if 'OREB' in df.columns else pd.Series(10.0, index=df.index)
+    tov = df['TOV'] if 'TOV' in df.columns else pd.Series(14.0, index=df.index)
+    pts = df['PTS'] if 'PTS' in df.columns else pd.Series(100.0, index=df.index)
+    df['POSSESSIONS'] = fga + POSSESSION_FT_WEIGHT * fta - oreb + tov
 
-    df[f'ROLLING_PTS_{ROLLING_WINDOW}'] = team_groups['PTS'].transform(rolling_sum)
+    df[f'ROLLING_PTS_{ROLLING_WINDOW}'] = team_groups['PTS'].transform(rolling_sum) if 'PTS' in df.columns else 100.0
     df[f'ROLLING_POSS_{ROLLING_WINDOW}'] = team_groups['POSSESSIONS'].transform(rolling_sum)
     
     df['ROLLING_OFF_RATING'] = (df[f'ROLLING_PTS_{ROLLING_WINDOW}'] / df[f'ROLLING_POSS_{ROLLING_WINDOW}']) * 100
@@ -204,17 +326,115 @@ def add_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
         .transform(lambda x: ewma(x, span=10))
     )
 
+    # Opponent box-score tracking (vectorized 2-team game subtraction)
+    has_game_id = 'GAME_ID' in df.columns
+    if has_game_id and 'PTS' in df.columns:
+        game_pts_sum = df.groupby('GAME_ID')['PTS'].transform('sum')
+        game_count = df.groupby('GAME_ID')['PTS'].transform('count')
+        df['OPP_PTS'] = np.where(game_count == 2, game_pts_sum - df['PTS'], pts)
+    else:
+        df['OPP_PTS'] = pts
+
+    stat_defaults = [
+        ('FG3M', 0.0), ('FG3A', 0.0), ('FGA', 85.0),
+        ('TOV', 14.0), ('FTA', 20.0), ('OREB', 10.0), ('DREB', 32.0),
+    ]
+    for stat, default_val in stat_defaults:
+        if has_game_id and stat in df.columns:
+            stat_sum = df.groupby('GAME_ID')[stat].transform('sum')
+            game_count = df.groupby('GAME_ID')[stat].transform('count')
+            df[f'OPP_{stat}'] = np.where(game_count == 2, stat_sum - df[stat], default_val)
+        else:
+            df[f'OPP_{stat}'] = df[stat] if stat in df.columns else default_val
+
+    # Opponent box-score tracking (rolling sums use strict shift 1)
+    df[f'ROLLING_OPP_PTS_{ROLLING_WINDOW}'] = team_groups['OPP_PTS'].transform(rolling_sum)
+    df[f'ROLLING_OPP_FG3M_{ROLLING_WINDOW}'] = team_groups['OPP_FG3M'].transform(rolling_sum)
+    df[f'ROLLING_OPP_FG3A_{ROLLING_WINDOW}'] = team_groups['OPP_FG3A'].transform(rolling_sum)
+    df[f'ROLLING_OPP_FGA_{ROLLING_WINDOW}'] = team_groups['OPP_FGA'].transform(rolling_sum)
+    df[f'ROLLING_OPP_TOV_{ROLLING_WINDOW}'] = team_groups['OPP_TOV'].transform(rolling_sum)
+    df[f'ROLLING_OPP_FTA_{ROLLING_WINDOW}'] = team_groups['OPP_FTA'].transform(rolling_sum)
+    df[f'ROLLING_OPP_OREB_{ROLLING_WINDOW}'] = team_groups['OPP_OREB'].transform(rolling_sum)
+
+    df['_TMP_DREB'] = df['DREB'] if 'DREB' in df.columns else pd.Series(32.0, index=df.index)
+    team_groups = df.groupby('TEAM_ABBREVIATION')
+    df[f'ROLLING_DREB_{ROLLING_WINDOW}'] = team_groups['_TMP_DREB'].transform(rolling_sum)
+    df = df.drop(columns=['_TMP_DREB'])
+
+    # Defensive style profiles (turnover pressure, foul discipline, rebounding control)
+    poss_sum = df[f'ROLLING_POSS_{ROLLING_WINDOW}'].replace(0, np.nan)
+    opp_fga_sum = df[f'ROLLING_OPP_FGA_{ROLLING_WINDOW}'].replace(0, np.nan)
+    tot_reb_sum = (df[f'ROLLING_DREB_{ROLLING_WINDOW}'] + df[f'ROLLING_OPP_OREB_{ROLLING_WINDOW}']).replace(0, np.nan)
+
+    df['DEF_TOV_RATE'] = (df[f'ROLLING_OPP_TOV_{ROLLING_WINDOW}'] / poss_sum).fillna(0.14)
+    df['DEF_FTR'] = (df[f'ROLLING_OPP_FTA_{ROLLING_WINDOW}'] / opp_fga_sum).fillna(0.24)
+    df['DEF_REB_RATE'] = (df[f'ROLLING_DREB_{ROLLING_WINDOW}'] / tot_reb_sum).fillna(0.75)
+
+    # Regress opponent 3PT% 50% toward the league average (36.0%)
+    # D_3PT_True = 0.5 * D_3PT_Actual + 0.5 * League_Average
+    opp_3pt_actual = (
+        df[f'ROLLING_OPP_FG3M_{ROLLING_WINDOW}']
+        / df[f'ROLLING_OPP_FG3A_{ROLLING_WINDOW}'].replace(0, np.nan)
+    ).fillna(LEAGUE_AVERAGE_3PT_PCT)
+
+    df['D_3PT_TRUE'] = (
+        OPP_3PT_VARIANCE_REGRESSION_WEIGHT * opp_3pt_actual
+        + (1.0 - OPP_3PT_VARIANCE_REGRESSION_WEIGHT) * LEAGUE_AVERAGE_3PT_PCT
+    )
+    df['D_3PT_ACTUAL'] = opp_3pt_actual
+
+    # Opponent 3PT Attempt Rate (volume allowed - controlled by defensive scheme)
+    df['OPP_3PA_RATE'] = (
+        df[f'ROLLING_OPP_FG3A_{ROLLING_WINDOW}']
+        / df[f'ROLLING_OPP_FGA_{ROLLING_WINDOW}'].replace(0, np.nan)
+    ).fillna(0.350)
+
+    # Variance-neutralized defensive points and defensive rating
+    expected_opp_fg3m = df[f'ROLLING_OPP_FG3A_{ROLLING_WINDOW}'] * df['D_3PT_TRUE']
+    pts_3pt_luck = (df[f'ROLLING_OPP_FG3M_{ROLLING_WINDOW}'] - expected_opp_fg3m) * 3.0
+    rolling_opp_pts_adj = df[f'ROLLING_OPP_PTS_{ROLLING_WINDOW}'] - pts_3pt_luck
+    df['ROLLING_DEF_RATING'] = (
+        rolling_opp_pts_adj / df[f'ROLLING_POSS_{ROLLING_WINDOW}'].replace(0, np.nan)
+    ) * 100.0
+    df['ROLLING_DEF_RATING'] = df['ROLLING_DEF_RATING'].fillna(DEFAULT_OFF_RATING)
+
+    df['ROLLING_NET_RATING'] = df['ROLLING_OFF_RATING'] - df['ROLLING_DEF_RATING']
+
+    # Single-game luck adjustment for EWMA metrics (strictly shifted inside ewma)
+    df['_TMP_OPP_3PT'] = (df['OPP_FG3M'] / df['OPP_FG3A'].replace(0, np.nan)).fillna(LEAGUE_AVERAGE_3PT_PCT)
+    df['_TMP_OPP_3PA_RATE'] = (df['OPP_FG3A'] / df['OPP_FGA'].replace(0, np.nan)).fillna(0.350)
+    single_pts_luck = (df['OPP_FG3M'] - df['OPP_FG3A'] * LEAGUE_AVERAGE_3PT_PCT) * 3.0
+    single_opp_pts_adj = df['OPP_PTS'] - single_pts_luck
+    df['_TMP_DEF_RATING'] = ((single_opp_pts_adj / df['POSSESSIONS'].replace(0, np.nan)) * 100.0).fillna(DEFAULT_OFF_RATING)
+
+    team_groups = df.groupby('TEAM_ABBREVIATION')
+    for span in EWMA_SPANS:
+        ewma_opp_3pt = team_groups['_TMP_OPP_3PT'].transform(lambda x, s=span: ewma(x, span=s)).fillna(LEAGUE_AVERAGE_3PT_PCT)
+        df[f'D_3PT_TRUE_EWMA_{span}'] = (
+            OPP_3PT_VARIANCE_REGRESSION_WEIGHT * ewma_opp_3pt
+            + (1.0 - OPP_3PT_VARIANCE_REGRESSION_WEIGHT) * LEAGUE_AVERAGE_3PT_PCT
+        )
+        df[f'OPP_3PA_RATE_EWMA_{span}'] = (
+            team_groups['_TMP_OPP_3PA_RATE'].transform(lambda x, s=span: ewma(x, span=s)).fillna(0.350)
+        )
+        df[f'DEF_RATING_EWMA_{span}'] = (
+            team_groups['_TMP_DEF_RATING'].transform(lambda x, s=span: ewma(x, span=s)).fillna(DEFAULT_OFF_RATING)
+        )
+        df[f'NET_RATING_EWMA_{span}'] = df[f'OFF_RATING_EWMA_{span}'] - df[f'DEF_RATING_EWMA_{span}']
+
+    df = df.drop(columns=['_TMP_OPP_3PT', '_TMP_OPP_3PA_RATE', '_TMP_DEF_RATING'])
+
     # Standardize historical memory for Z-stats
     z_columns = [col for col in df.columns if col.startswith("Z_")]
-
-    rolling_z = team_groups[z_columns].transform(rolling_mean)
-    for col in z_columns:
-        df[f"{col}_ROLLING_{ROLLING_WINDOW}"] = rolling_z[col]
-
-    for span in EWMA_SPANS:
-        ewma_z = team_groups[z_columns].transform(lambda x, s=span: ewma(x, span=s))
+    if z_columns:
+        rolling_z = team_groups[z_columns].transform(rolling_mean)
         for col in z_columns:
-            df[f"{col}_EWMA_{span}"] = ewma_z[col]
+            df[f"{col}_ROLLING_{ROLLING_WINDOW}"] = rolling_z[col]
+
+        for span in EWMA_SPANS:
+            ewma_z = team_groups[z_columns].transform(lambda x, s=span: ewma(x, span=s))
+            for col in z_columns:
+                df[f"{col}_EWMA_{span}"] = ewma_z[col]
 
 
     # Map past opponent strength
@@ -411,6 +631,41 @@ def add_schedule_and_elo_deltas(matchups_df: pd.DataFrame) -> pd.DataFrame:
             matchups_df[f'HOME_PACE_EWMA_{span}']
             - matchups_df[f'AWAY_PACE_EWMA_{span}']
         )
+
+    # Opponent 3PT variance neutralization & defensive/net rating deltas
+    if 'HOME_D_3PT_TRUE' in matchups_df.columns and 'AWAY_D_3PT_TRUE' in matchups_df.columns:
+        matchups_df['DELTA_D_3PT_TRUE'] = matchups_df['HOME_D_3PT_TRUE'] - matchups_df['AWAY_D_3PT_TRUE']
+        matchups_df['DELTA_OPP_3PA_RATE'] = matchups_df['HOME_OPP_3PA_RATE'] - matchups_df['AWAY_OPP_3PA_RATE']
+        matchups_df['DELTA_ROLLING_DEF_RATING'] = matchups_df['HOME_ROLLING_DEF_RATING'] - matchups_df['AWAY_ROLLING_DEF_RATING']
+        matchups_df['DELTA_ROLLING_NET_RATING'] = matchups_df['HOME_ROLLING_NET_RATING'] - matchups_df['AWAY_ROLLING_NET_RATING']
+        for span in EWMA_SPANS:
+            if f'HOME_D_3PT_TRUE_EWMA_{span}' in matchups_df.columns:
+                matchups_df[f'DELTA_D_3PT_TRUE_EWMA_{span}'] = (
+                    matchups_df[f'HOME_D_3PT_TRUE_EWMA_{span}'] - matchups_df[f'AWAY_D_3PT_TRUE_EWMA_{span}']
+                )
+                matchups_df[f'DELTA_OPP_3PA_RATE_EWMA_{span}'] = (
+                    matchups_df[f'HOME_OPP_3PA_RATE_EWMA_{span}'] - matchups_df[f'AWAY_OPP_3PA_RATE_EWMA_{span}']
+                )
+                matchups_df[f'DELTA_DEF_RATING_EWMA_{span}'] = (
+                    matchups_df[f'HOME_DEF_RATING_EWMA_{span}'] - matchups_df[f'AWAY_DEF_RATING_EWMA_{span}']
+                )
+                matchups_df[f'DELTA_NET_RATING_EWMA_{span}'] = (
+                    matchups_df[f'HOME_NET_RATING_EWMA_{span}'] - matchups_df[f'AWAY_NET_RATING_EWMA_{span}']
+                )
+    # Circadian fatigue & travel mileage deltas (positive delta indicates away team is fatigued)
+    if 'AWAY_CIRCADIAN_FATIGUE_INDEX' in matchups_df.columns and 'HOME_CIRCADIAN_FATIGUE_INDEX' in matchups_df.columns:
+        matchups_df['DELTA_CIRCADIAN_FATIGUE'] = (
+            matchups_df['AWAY_CIRCADIAN_FATIGUE_INDEX'] - matchups_df['HOME_CIRCADIAN_FATIGUE_INDEX']
+        )
+        matchups_df['DELTA_TRAVEL_7D'] = (
+            matchups_df['AWAY_TRAVEL_7D'] - matchups_df['HOME_TRAVEL_7D']
+        )
+        matchups_df['DELTA_TZ_CIRCADIAN_PENALTY'] = (
+            matchups_df['AWAY_TZ_CIRCADIAN_PENALTY'] - matchups_df['HOME_TZ_CIRCADIAN_PENALTY']
+        )
+        if 'HOME_4_IN_6' in matchups_df.columns and 'AWAY_4_IN_6' in matchups_df.columns:
+            matchups_df['DELTA_4_IN_6'] = matchups_df['HOME_4_IN_6'] - matchups_df['AWAY_4_IN_6']
+
     return matchups_df
 
 
@@ -475,6 +730,86 @@ def add_zscore_matchup_deltas(matchups_df: pd.DataFrame, home_df: pd.DataFrame) 
     return matchups_df
 
 
+def add_tactical_clash_matrix(matchups_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Computes non-transitive tactical matchup clashes:
+    1. Turnover Pressure Clash: Defensive turnover creation * opponent ball-security vulnerability.
+    2. Crash vs. Leak-out Clash: Offensive rebounding aggression * opponent transition pace.
+    3. Free Throw Clash: Offensive FT generation * defensive foul rate conceded.
+    4. 3PT Perimeter Exploitation: 3PT volume & efficiency * perimeter attempt rate conceded.
+    5. Glass Control Dominance: Offensive glass crashing * opponent defensive rebounding deficit.
+    6. Composite Tactical Clash Advantage.
+    """
+    # 1. Turnover Pressure Clash
+    if 'HOME_DEF_TOV_RATE' in matchups_df.columns and 'AWAY_DEF_TOV_RATE' in matchups_df.columns:
+        home_tov_vuln = matchups_df.get('AWAY_FOUR_FACTOR_TOV_ROLLING_8', 0.14)
+        away_tov_vuln = matchups_df.get('HOME_FOUR_FACTOR_TOV_ROLLING_8', 0.14)
+        matchups_df['HOME_TURNOVER_PRESSURE_CLASH'] = matchups_df['HOME_DEF_TOV_RATE'] * home_tov_vuln
+        matchups_df['AWAY_TURNOVER_PRESSURE_CLASH'] = matchups_df['AWAY_DEF_TOV_RATE'] * away_tov_vuln
+        matchups_df['DELTA_TURNOVER_PRESSURE_CLASH'] = (
+            matchups_df['HOME_TURNOVER_PRESSURE_CLASH'] - matchups_df['AWAY_TURNOVER_PRESSURE_CLASH']
+        )
+
+    # 2. Crash vs. Leak-out (Offensive Rebounds vs Transition Pace)
+    if 'HOME_FOUR_FACTOR_OREB_ROLLING_8' in matchups_df.columns:
+        home_oreb = matchups_df['HOME_FOUR_FACTOR_OREB_ROLLING_8']
+        away_oreb = matchups_df.get('AWAY_FOUR_FACTOR_OREB_ROLLING_8', 0.25)
+        home_pace = matchups_df.get('HOME_ROLLING_PACE_8', 100.0)
+        away_pace = matchups_df.get('AWAY_ROLLING_PACE_8', 100.0)
+
+        matchups_df['HOME_REBOUND_PACE_CLASH'] = home_oreb * (away_pace / 100.0)
+        matchups_df['AWAY_REBOUND_PACE_CLASH'] = away_oreb * (home_pace / 100.0)
+        matchups_df['DELTA_REBOUND_PACE_CLASH'] = (
+            matchups_df['HOME_REBOUND_PACE_CLASH'] - matchups_df['AWAY_REBOUND_PACE_CLASH']
+        )
+
+    # 3. Free Throw Exploitation Clash
+    if 'HOME_FOUR_FACTOR_FTR_ROLLING_8' in matchups_df.columns and 'AWAY_DEF_FTR' in matchups_df.columns:
+        matchups_df['HOME_FTR_CLASH'] = matchups_df['HOME_FOUR_FACTOR_FTR_ROLLING_8'] * matchups_df['AWAY_DEF_FTR']
+        matchups_df['AWAY_FTR_CLASH'] = matchups_df.get('AWAY_FOUR_FACTOR_FTR_ROLLING_8', 0.25) * matchups_df.get('HOME_DEF_FTR', 0.24)
+        matchups_df['DELTA_FTR_CLASH'] = matchups_df['HOME_FTR_CLASH'] - matchups_df['AWAY_FTR_CLASH']
+
+    # 4. 3PT Perimeter Exploitation Clash
+    if 'AWAY_OPP_3PA_RATE' in matchups_df.columns and 'HOME_FOUR_FACTOR_EFG_ROLLING_8' in matchups_df.columns:
+        matchups_df['HOME_3PT_EXPLOITATION'] = (
+            matchups_df['AWAY_OPP_3PA_RATE'] * matchups_df['HOME_FOUR_FACTOR_EFG_ROLLING_8']
+        )
+        matchups_df['AWAY_3PT_EXPLOITATION'] = (
+            matchups_df.get('HOME_OPP_3PA_RATE', 0.35) * matchups_df.get('AWAY_FOUR_FACTOR_EFG_ROLLING_8', 0.50)
+        )
+        matchups_df['DELTA_3PT_EXPLOITATION'] = (
+            matchups_df['HOME_3PT_EXPLOITATION'] - matchups_df['AWAY_3PT_EXPLOITATION']
+        )
+
+    # 5. Glass Control Dominance
+    if 'HOME_DEF_REB_RATE' in matchups_df.columns and 'AWAY_DEF_REB_RATE' in matchups_df.columns:
+        matchups_df['HOME_GLASS_DOMINANCE'] = (
+            matchups_df.get('HOME_FOUR_FACTOR_OREB_ROLLING_8', 0.25) * (1.0 - matchups_df['AWAY_DEF_REB_RATE'])
+        )
+        matchups_df['AWAY_GLASS_DOMINANCE'] = (
+            matchups_df.get('AWAY_FOUR_FACTOR_OREB_ROLLING_8', 0.25) * (1.0 - matchups_df['HOME_DEF_REB_RATE'])
+        )
+        matchups_df['DELTA_GLASS_DOMINANCE'] = (
+            matchups_df['HOME_GLASS_DOMINANCE'] - matchups_df['AWAY_GLASS_DOMINANCE']
+        )
+
+    # 6. Composite Tactical Clash Advantage
+    if (
+        'DELTA_TURNOVER_PRESSURE_CLASH' in matchups_df.columns
+        and 'DELTA_GLASS_DOMINANCE' in matchups_df.columns
+        and 'DELTA_FTR_CLASH' in matchups_df.columns
+        and 'DELTA_3PT_EXPLOITATION' in matchups_df.columns
+    ):
+        matchups_df['DELTA_TACTICAL_CLASH_ADVANTAGE'] = (
+            2.0 * matchups_df['DELTA_TURNOVER_PRESSURE_CLASH']
+            + 1.5 * matchups_df['DELTA_GLASS_DOMINANCE']
+            + 1.0 * matchups_df['DELTA_FTR_CLASH']
+            + 1.0 * matchups_df['DELTA_3PT_EXPLOITATION']
+        )
+
+    return matchups_df
+
+
 def drop_postgame_leakage_columns(matchups_df: pd.DataFrame) -> pd.DataFrame:
     """Strips post-game box score statistics to prevent data leakage."""
     raw_box_score_stats = [
@@ -482,12 +817,18 @@ def drop_postgame_leakage_columns(matchups_df: pd.DataFrame) -> pd.DataFrame:
         'FTM', 'FTA', 'FT_PCT', 'OREB', 'DREB', 'REB', 'AST', 'STL',
         'BLK', 'TOV', 'PF', 'PLUS_MINUS', 'POSSESSIONS', 'PACE', 'MIN',
         'FOUR_FACTOR_EFG', 'FOUR_FACTOR_TOV', 'FOUR_FACTOR_OREB', 'FOUR_FACTOR_FTR',
+        'OPP_PTS', 'OPP_FGM', 'OPP_FGA', 'OPP_FG3M', 'OPP_FG3A', 'OPP_TOV', 'OPP_FTA', 'OPP_OREB', 'OPP_DREB',
+        f'ROLLING_OPP_PTS_{ROLLING_WINDOW}', f'ROLLING_OPP_FG3M_{ROLLING_WINDOW}',
+        f'ROLLING_OPP_FG3A_{ROLLING_WINDOW}', f'ROLLING_OPP_FGA_{ROLLING_WINDOW}',
+        f'ROLLING_OPP_TOV_{ROLLING_WINDOW}', f'ROLLING_OPP_FTA_{ROLLING_WINDOW}',
+        f'ROLLING_OPP_OREB_{ROLLING_WINDOW}', f'ROLLING_DREB_{ROLLING_WINDOW}',
     ]
     cols_to_drop = []
     for stat in raw_box_score_stats:
         cols_to_drop.extend([
             f"HOME_{stat}", f"AWAY_{stat}", 
-            f"HOME_Z_{stat}", f"AWAY_Z_{stat}"
+            f"HOME_Z_{stat}", f"AWAY_Z_{stat}",
+            stat,
         ])
     return matchups_df.drop(
         columns=[c for c in cols_to_drop if c in matchups_df.columns]
@@ -500,6 +841,7 @@ def build_matchups(df: pd.DataFrame) -> pd.DataFrame:
     matchups_df = add_schedule_and_elo_deltas(matchups_df)
     matchups_df = add_altitude_matchup_features(matchups_df)
     matchups_df = add_four_factors_matchup_deltas(matchups_df)
+    matchups_df = add_tactical_clash_matrix(matchups_df)
     matchups_df = add_zscore_matchup_deltas(matchups_df, home_df)
     matchups_df = drop_postgame_leakage_columns(matchups_df)
     return matchups_df

@@ -93,13 +93,19 @@ def _extract_validation_probabilities(
 def _optimize_weights_slsqp(
     predictions_matrix: np.ndarray,
     y_true: pd.Series,
+    shrinkage_lambda: float = 0.05,
 ) -> np.ndarray:
     """
-    Solves the constrained convex optimization problem over the probability simplex.
+    Solves the constrained convex optimization problem over the probability simplex
+    with L2 shrinkage regularization toward equal weighting (1/M).
+
+    Shrinkage prevents collinear models (e.g. XGBoost and CatBoost) from collapsing
+    one of the models to 0.000 purely due to minor validation noise.
 
     Args:
         predictions_matrix: Array of shape (n_samples, n_models) containing probabilities.
         y_true: Ground truth binary target vector.
+        shrinkage_lambda: Penalty weight pulling weights toward 1/M prior.
 
     Returns:
         Optimal weight vector w of shape (n_models,) summing to 1.0 with w_j >= 0.
@@ -109,7 +115,10 @@ def _optimize_weights_slsqp(
     def _cross_entropy_objective(weights: np.ndarray) -> float:
         blended = np.dot(predictions_matrix, weights)
         blended_safe = np.clip(blended, LOG_LOSS_EPSILON, 1.0 - LOG_LOSS_EPSILON)
-        return float(log_loss(y_true, blended_safe))
+        loss = float(log_loss(y_true, blended_safe))
+        if shrinkage_lambda > 0.0:
+            loss += shrinkage_lambda * float(np.sum((weights - (1.0 / n_models)) ** 2))
+        return loss
 
     constraints = {"type": "eq", "fun": lambda w: np.sum(w) - 1.0}
     bounds = [(0.0, 1.0) for _ in range(n_models)]
@@ -147,6 +156,7 @@ def learn_ensemble_weights(
     y_val: pd.Series = None,
     catboost: Optional[ModelArtifacts] = None,
     margin: Optional[ModelArtifacts] = None,
+    shrinkage_lambda: float = 0.05,
 ) -> Tuple[np.ndarray, Dict[str, float]]:
     """
     Learns non-negative ensemble blending weights using validation set predictions.
@@ -158,6 +168,7 @@ def learn_ensemble_weights(
         y_val: Ground truth validation labels.
         catboost: Optional trained CatBoost model artifact.
         margin: Optional trained Pace-Modulated Margin model artifact.
+        shrinkage_lambda: L2 regularization strength toward equal weighting.
 
     Returns:
         Tuple containing:
@@ -169,7 +180,7 @@ def learn_ensemble_weights(
     predictions_matrix, model_names = _extract_validation_probabilities(
         mlp=mlp, xgb=xgb, lr=lr, catboost=catboost, margin=margin
     )
-    weights = _optimize_weights_slsqp(predictions_matrix, y_val)
+    weights = _optimize_weights_slsqp(predictions_matrix, y_val, shrinkage_lambda=shrinkage_lambda)
 
     formula = {name: float(w) for name, w in zip(model_names, weights)}
 
