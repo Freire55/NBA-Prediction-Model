@@ -12,13 +12,14 @@ Output:
     data/player_embeddings.csv
 """
 
+import argparse
 import logging
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import NMF, PCA
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 from feature_engineering_players import calculate_game_score
 
@@ -201,6 +202,99 @@ def fit_chronological_pca(
     return df, embed_cols, pca
 
 
+def fit_chronological_nmf(
+    df: pd.DataFrame,
+    rolling_cols: list[str],
+    train_end_season: str = TRAIN_END_SEASON,
+    n_components: int = N_COMPONENTS,
+) -> tuple[pd.DataFrame, list[str], NMF, list[str]]:
+    """Fits NMF strictly on non-negative metrics from training seasons and generates latent embeddings."""
+    non_negative_stats = [
+        col for col in rolling_cols
+        if not any(bad in col for bad in ["GAME_SCORE", "FANTASY_SCORE", "PIE_PROXY"])
+    ]
+    train_mask = df["SEASON_ID"] <= train_end_season
+
+    scaler = MinMaxScaler(feature_range=(0.0, 1.0))
+    scaler.fit(df.loc[train_mask, non_negative_stats].values)
+
+    X_train = np.clip(scaler.transform(df.loc[train_mask, non_negative_stats].values), 0.0, None)
+    X_all = np.clip(scaler.transform(df[non_negative_stats].values), 0.0, None)
+
+    nmf = NMF(
+        n_components=n_components,
+        init="nndsvda",
+        random_state=42,
+        max_iter=1000,
+        alpha_W=0.0,
+        alpha_H=0.0,
+        l1_ratio=0.0,
+    )
+    nmf.fit(X_train)
+    embeddings = nmf.transform(X_all)
+
+    embed_cols = []
+    for i in range(1, n_components + 1):
+        col_name = f"EMBED_{i}"
+        df[col_name] = embeddings[:, i - 1]
+        embed_cols.append(col_name)
+
+    return df, embed_cols, nmf, non_negative_stats
+
+
+def fit_chronological_hybrid(
+    df: pd.DataFrame,
+    rolling_cols: list[str],
+    train_end_season: str = TRAIN_END_SEASON,
+    n_pca: int = 4,
+    n_nmf: int = 4,
+) -> tuple[pd.DataFrame, list[str], PCA, NMF, list[str]]:
+    """Fits PCA (top n_pca dims) and NMF (n_nmf archetypes) strictly on training seasons."""
+    train_mask = df["SEASON_ID"] <= train_end_season
+
+    # 1. PCA on standardized features
+    scaler_pca = StandardScaler()
+    scaler_pca.fit(df.loc[train_mask, rolling_cols].values)
+    X_pca_train = scaler_pca.transform(df.loc[train_mask, rolling_cols].values)
+    X_pca_all = scaler_pca.transform(df[rolling_cols].values)
+
+    pca = PCA(n_components=n_pca, random_state=42)
+    pca.fit(X_pca_train)
+    embeddings_pca = pca.transform(X_pca_all)
+
+    # 2. NMF on non-negative features scaled to [0, 1]
+    non_negative_stats = [
+        col for col in rolling_cols
+        if not any(bad in col for bad in ["GAME_SCORE", "FANTASY_SCORE", "PIE_PROXY"])
+    ]
+    scaler_nmf = MinMaxScaler(feature_range=(0.0, 1.0))
+    scaler_nmf.fit(df.loc[train_mask, non_negative_stats].values)
+    X_nmf_train = np.clip(scaler_nmf.transform(df.loc[train_mask, non_negative_stats].values), 0.0, None)
+    X_nmf_all = np.clip(scaler_nmf.transform(df[non_negative_stats].values), 0.0, None)
+
+    nmf = NMF(
+        n_components=n_nmf,
+        init="nndsvda",
+        random_state=42,
+        max_iter=1000,
+        alpha_W=0.0,
+        alpha_H=0.0,
+        l1_ratio=0.0,
+    )
+    nmf.fit(X_nmf_train)
+    embeddings_nmf = nmf.transform(X_nmf_all)
+
+    combined_embeddings = np.hstack([embeddings_pca, embeddings_nmf])
+    total_components = n_pca + n_nmf
+    embed_cols = []
+    for i in range(1, total_components + 1):
+        col_name = f"EMBED_{i}"
+        df[col_name] = combined_embeddings[:, i - 1]
+        embed_cols.append(col_name)
+
+    return df, embed_cols, pca, nmf, non_negative_stats
+
+
 def save_embeddings(df: pd.DataFrame, embed_cols: list[str], output_path: Path) -> None:
     """Saves player embeddings to CSV."""
     output_df = df[["PLAYER_ID", "GAME_DATE"] + embed_cols]
@@ -219,13 +313,41 @@ def log_pca_variance_summary(pca: PCA, n_components: int) -> None:
         cum_var += var
         logger.info(f"  Dimension {i} (EMBED_{i}): {var * 100:6.2f}% of variance  |  Cumulative: {cum_var * 100:6.2f}%")
     logger.info("-" * 65)
-    logger.info(f"  Total Variance (4 dimensions): {sum(pca.explained_variance_ratio_[:4]) * 100:.2f}%")
     logger.info(f"  Total Variance ({n_components} dimensions): {sum(pca.explained_variance_ratio_[:n_components]) * 100:.2f}%")
     logger.info("=" * 65)
 
 
+def log_nmf_loadings(nmf: NMF, feature_names: list[str], offset: int = 0) -> None:
+    """Logs top feature loadings for each NMF factor."""
+    clean_names = [col.replace("ROLLING_", "") for col in feature_names]
+    logger.info("=" * 65)
+    logger.info(f"NMF FACTOR LOADINGS ({nmf.n_components} ARCHETYPES):")
+    logger.info("=" * 65)
+    for i in range(nmf.n_components):
+        top_indices = np.argsort(nmf.components_[i])[::-1][:4]
+        loadings_str = ", ".join([f"{clean_names[idx]} ({nmf.components_[i, idx]:.3f})" for idx in top_indices])
+        logger.info(f"  Archetype {i+1} (EMBED_{offset + i + 1}): {loadings_str}")
+    logger.info("=" * 65)
+
+
 def main() -> None:
-    """Executes the player embedding pipeline."""
+    """Executes the player embedding pipeline with selected method."""
+    parser = argparse.ArgumentParser(description="Generate player embeddings using PCA, NMF, or Hybrid.")
+    parser.add_argument(
+        "--method",
+        type=str,
+        choices=["pca", "nmf", "hybrid"],
+        default="hybrid",
+        help="Embedding dimensionality reduction method (default: hybrid)",
+    )
+    parser.add_argument(
+        "--components",
+        type=int,
+        default=N_COMPONENTS,
+        help="Number of embedding components (default: 8)",
+    )
+    args = parser.parse_args()
+
     logger.info("Loading raw player logs for embedding generation...")
     df = load_and_clean_player_logs(DATA_DIR / INPUT_FILE)
 
@@ -235,11 +357,26 @@ def main() -> None:
     logger.info("Building historical profiles (Exponential Moving Average)...")
     df, rolling_cols = build_leak_free_ewma_profiles(df, stat_cols)
 
-    logger.info(f"Training PCA basis strictly on seasons <= {TRAIN_END_SEASON}...")
-    df, embed_cols, pca = fit_chronological_pca(df, rolling_cols)
-
-    save_embeddings(df, embed_cols, DATA_DIR / OUTPUT_FILE)
-    log_pca_variance_summary(pca, N_COMPONENTS)
+    if args.method == "pca":
+        logger.info(f"Fitting PCA ({args.components}D) strictly on seasons <= {TRAIN_END_SEASON}...")
+        df, embed_cols, pca = fit_chronological_pca(df, rolling_cols, n_components=args.components)
+        save_embeddings(df, embed_cols, DATA_DIR / OUTPUT_FILE)
+        log_pca_variance_summary(pca, args.components)
+    elif args.method == "nmf":
+        logger.info(f"Fitting NMF ({args.components}D) strictly on seasons <= {TRAIN_END_SEASON}...")
+        df, embed_cols, nmf, non_neg_stats = fit_chronological_nmf(df, rolling_cols, n_components=args.components)
+        save_embeddings(df, embed_cols, DATA_DIR / OUTPUT_FILE)
+        log_nmf_loadings(nmf, non_neg_stats)
+    elif args.method == "hybrid":
+        n_pca = args.components // 2
+        n_nmf = args.components - n_pca
+        logger.info(f"Fitting Hybrid PCA-{n_pca} + NMF-{n_nmf} strictly on seasons <= {TRAIN_END_SEASON}...")
+        df, embed_cols, pca, nmf, non_neg_stats = fit_chronological_hybrid(
+            df, rolling_cols, n_pca=n_pca, n_nmf=n_nmf
+        )
+        save_embeddings(df, embed_cols, DATA_DIR / OUTPUT_FILE)
+        log_pca_variance_summary(pca, n_pca)
+        log_nmf_loadings(nmf, non_neg_stats, offset=n_pca)
 
 
 if __name__ == "__main__":
