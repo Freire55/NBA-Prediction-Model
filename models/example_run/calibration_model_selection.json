@@ -1,40 +1,40 @@
 {
     "MLP": {
         "method": "platt",
-        "raw_log_loss": 0.6033,
-        "platt_log_loss": 0.6012,
-        "beta_log_loss": 0.6012,
-        "spline_log_loss": 0.6015,
-        "selected_log_loss": 0.6012,
+        "raw_log_loss": 0.6064,
+        "platt_log_loss": 0.6041,
+        "beta_log_loss": 0.6041,
+        "spline_log_loss": 0.6041,
+        "selected_log_loss": 0.6041,
         "params": {
-            "a": 0.8504,
-            "c": 0.0067
+            "a": 0.8397,
+            "c": 0.0112
         }
     },
     "XGBoost": {
         "method": "beta",
-        "raw_log_loss": 0.5926,
-        "platt_log_loss": 0.5913,
-        "beta_log_loss": 0.5909,
-        "spline_log_loss": 0.5911,
-        "selected_log_loss": 0.5909,
+        "raw_log_loss": 0.5948,
+        "platt_log_loss": 0.5932,
+        "beta_log_loss": 0.593,
+        "spline_log_loss": 0.5932,
+        "selected_log_loss": 0.593,
         "params": {
-            "a": 0.583,
-            "b": 1.4269,
-            "c": -0.746
+            "a": 0.7012,
+            "b": 1.357,
+            "c": -0.6217
         }
     },
     "CatBoost": {
         "method": "beta",
-        "raw_log_loss": 0.5943,
-        "platt_log_loss": 0.5927,
-        "beta_log_loss": 0.5923,
-        "spline_log_loss": 0.5927,
-        "selected_log_loss": 0.5923,
+        "raw_log_loss": 0.594,
+        "platt_log_loss": 0.593,
+        "beta_log_loss": 0.5928,
+        "spline_log_loss": 0.5932,
+        "selected_log_loss": 0.5928,
         "params": {
-            "a": 0.6168,
-            "b": 1.4975,
-            "c": -0.7744
+            "a": 0.7489,
+            "b": 1.2864,
+            "c": -0.5062
         }
     }
 }

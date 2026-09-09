@@ -322,6 +322,20 @@ class TrainingConfig:
                 "EMBED_DELTA_6_SUM",
                 "EMBED_DELTA_7_SUM",
                 "EMBED_DELTA_8_SUM",
+                # Run 6 Architecture-Specific Routing (revertible): Hand-crafted clash terms causing split competition
+                "HOME_TURNOVER_PRESSURE_CLASH",
+                "AWAY_TURNOVER_PRESSURE_CLASH",
+                "HOME_REBOUND_PACE_CLASH",
+                "AWAY_REBOUND_PACE_CLASH",
+                "HOME_FTR_CLASH",
+                "AWAY_FTR_CLASH",
+                "HOME_3PT_EXPLOITATION",
+                "AWAY_3PT_EXPLOITATION",
+                "HOME_GLASS_DOMINANCE",
+                "AWAY_GLASS_DOMINANCE",
+                # Zero / negligible tree gain
+                "AWAY_4_IN_5",
+                "AWAY_ALTITUDE_FATIGUE_IMPACT",
             ],
             "catboost": [
                 # Base metadata / structural removals & zero-variance
@@ -438,6 +452,9 @@ class TrainingConfig:
                 "EMBED_RAW_DELTA_7_MAX",
                 "EMBED_RAW_DELTA_7_STD",
                 "EMBED_RAW_DELTA_8_STD",
+                # Run 6 Architecture-Specific Routing (revertible): Zero tree gain in CatBoost
+                "HOME_OPP_3PA_RATE_EWMA_5",
+                "HOME_TZ_EASTWARD_LOSS",
             ],
             "margin": [
                 "DELTA_ROLLING_PACE",

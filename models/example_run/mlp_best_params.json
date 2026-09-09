@@ -2,11 +2,11 @@
     "max_iter": 500,
     "learning_rate_init": 0.0005,
     "hidden_layer_sizes": [
+        256,
         128,
-        64,
-        32
+        64
     ],
     "batch_size": 64,
-    "alpha": 0.01,
+    "alpha": 0.001,
     "activation": "tanh"
 }

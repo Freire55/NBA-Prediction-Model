@@ -318,6 +318,19 @@ class SplineCalibrator(BaseEstimator, ClassifierMixin):
         calibrated_p = np.clip(self.spline_(p_clipped), CALIBRATION_EPSILON, 1.0 - CALIBRATION_EPSILON)
         return np.column_stack([1.0 - calibrated_p, calibrated_p])
 
+    def __getstate__(self) -> dict[str, Any]:
+        """Excludes unpicklable array API modules inside PchipInterpolator."""
+        state = self.__dict__.copy()
+        state["spline_"] = None
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Reconstructs PchipInterpolator from knot coordinates upon deserialization."""
+        self.__dict__.update(state)
+        if self.is_fitted_ and self.knots_x_ is not None and self.knots_y_ is not None:
+            self.spline_ = PchipInterpolator(self.knots_x_, self.knots_y_)
+
+
 
 # ======================================================
 # Spline Calibrated Classifier Wrapper

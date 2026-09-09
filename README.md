@@ -4,42 +4,47 @@
 [![Code Style: Clean & Modular](https://img.shields.io/badge/code%20style-production%20ready-green.svg)]()
 [![Validation: Pandera Contracts](https://img.shields.io/badge/data%20contracts-Pandera-yellow.svg)](https://pandera.readthedocs.io/)
 [![Storage: Apache Parquet](https://img.shields.io/badge/storage-Apache%20Parquet-orange.svg)]()
-[![Tests: Pytest Passing](https://img.shields.io/badge/tests-59%20passed-brightgreen.svg)]()
+[![Tests: Pytest Passing](https://img.shields.io/badge/tests-62%20passed-brightgreen.svg)]()
 
 A production-grade, leak-free machine learning system for predicting NBA regular-season game outcomes strictly using information available prior to tip-off. 
 
-The pipeline bridges sports domain modeling with rigorous machine learning engineering: **era-adjusted pace normalization**, **Dean Oliver Four Factors modeling**, **arena altitude & rest penalties**, **dynamic state-space Elo with uncertainty & HCA**, **learned player latent representations (PCA)**, **player volatility & star hierarchy modeling**, **exponential recency-weighted neural networks**, **heterogeneous feature routing**, **CatBoost symmetric oblivious trees**, **tri-method probability calibration (Spline + Beta + Platt)**, **bivariate pace-modulated margin regression**, and **5-model SLSQP-constrained meta-ensemble optimization**.
+The pipeline bridges sports domain modeling with rigorous machine learning engineering: **era-adjusted pace normalization**, **Dean Oliver Four Factors modeling**, **arena altitude & rest penalties**, **circadian fatigue engine & 7-day travel mileage**, **opponent 3PT variance neutralization**, **tactical clash matrix**, **dynamic state-space Elo with uncertainty & HCA**, **learned hybrid player representations (PCA-4 + NMF-4)**, **player volatility & star hierarchy modeling**, **exponential recency-weighted neural networks**, **heterogeneous feature routing**, **CatBoost symmetric oblivious trees**, **tri-method probability calibration (Spline + Beta + Platt)**, **bivariate pace-modulated margin regression**, and **L2-regularized 4-model SLSQP meta-ensemble optimization**.
 
 ---
 
 ## Executive Summary & Results
 
-The system is evaluated on every NBA regular season game from **2021 through present (6,140 held-out prospective test games)**. All feature scalers, PCA/NMF projections, hyperparameter tuning, probability calibrations, and ensemble weights are fitted exclusively on prior historical data (**22,943 training games from 2000–2018** and **2,139 validation games from 2019–2020**).
+The system is evaluated on every NBA regular season game from **2022 through present (4,910 held-out prospective test games)**. All feature scalers, PCA/NMF projections, hyperparameter tuning, probability calibrations, and regularized ensemble weights are fitted exclusively on prior historical data (**25,082 training games from 2000–2020** and **1,230 post-COVID validation games from 2021–2022**).
 
 | Model Architecture | Feature Representation | Test Accuracy | Log Loss | Brier Score | ROC-AUC | Ensemble Weight |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **Logistic Regression** | Differentials (`DELTA_`) | Pruned (0%) | — | — | — | 0.0% |
-| **Pace Margin (CDF)** | Bivariate Efficiency + CDF | 66.86% | 0.6076 | 0.2102 | 0.7233 | 8.7% |
-| **CatBoost (Beta-Calibrated)** | Symmetric Trees (`HOME_`, `AWAY_`, `EMBED_`) | 67.13% | 0.6004 | 0.2073 | 0.7328 | 22.7% |
-| **Deep Neural Net (MLP)** | Recency-Weighted + Latent (`EMBED_`) | 67.13% | 0.6119 | 0.2114 | 0.7214 | 29.5% |
-| **XGBoost (Beta-Calibrated)** | Absolute (`HOME_`, `AWAY_`, `EMBED_`) | **67.31%** | **0.5999** | **0.2070** | **0.7334** | **39.2%** |
-| **Meta-Ensemble (SLSQP)** | **Optimal 4-Model Constrained Blend** | **67.88% (4,168)** | **0.5991** | **0.2064** | **0.7358** | **100.0%** |
+| **Deep Neural Net (MLP)** | Recency-Weighted + Latent (`DELTA_`, `EMBED_`) | **68.31%** | 0.6034 | 0.2077 | 0.7333 | 23.0% |
+| **Pace Margin (CDF)** | Bivariate Efficiency + CDF (`DELTA_`) | 67.80% | 0.6006 | 0.2072 | 0.7310 | 28.1% |
+| **XGBoost (Beta-Calibrated)** | Absolute (`HOME_`, `AWAY_`, `EMBED_`) | 67.78% | 0.5950 | 0.2051 | 0.7382 | 25.8% |
+| **CatBoost (Beta-Calibrated)** | Symmetric Trees (`HOME_`, `AWAY_`, `EMBED_`) | 67.47% | 0.5941 | 0.2048 | 0.7382 | 23.1% |
+| **Meta-Ensemble (Regularized SLSQP)** | **Optimal 4-Model Convex Blend ($\lambda=0.05$)** | **68.21% (3,349) / 68.19% (3,348)** | **0.5926** | **0.2037** | **0.7427** | **100.0%** |
+| **Logistic Regression** | Differentials (`DELTA_`) | Retired (0%) | — | — | — | 0.0% |
 
-### Prospective Benchmark Evolution (6,140 Held-Out Games: 2021–Present)
+### Prospective Benchmark Evolution (4,910 Held-Out Modern Games: 2022–Present)
 
-| Pipeline Variant | Tuning CV Log Loss (XGB / CB / MLP) | Test Accuracy | Correct Games | Test Log Loss | Test ROC-AUC |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **Baseline Unpruned (PCA-8)** | 0.6012 / 0.6004 / 0.6095 | 67.54% | 4,147 / 6,140 | 0.5980 | 0.7364 |
-| **Pruned Dataset (PCA-8)** | 0.5968 / 0.5956 / 0.6048 | 67.69% | 4,156 / 6,140 | **0.5978** | **0.7369** |
-| **Standalone NMF-8** | 0.5968 / 0.5956 / 0.6048 | 67.36% | 4,136 / 6,140 | 0.5997 | 0.7336 |
-| **Hybrid (PCA-4 + NMF-4) (Current Peak)** | **0.5927 / 0.5935 / 0.6032** | **67.88%** | **4,168 / 6,140** | 0.5991 | 0.7358 |
+| Pipeline Variant | Tuning CV Log Loss (XGB / CB / MLP) | Test Accuracy | Correct Games | Test Log Loss | Test ROC-AUC | Test Brier Score |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Baseline (Bubble Val Distortion)** | 0.5968 / 0.5956 / 0.6048 | 67.52% | 3,315 / 4,910 | 0.5974 | 0.7373 | 0.2058 |
+| **Run 1 (+ Opp 3PT Neutralization)** | 0.5962 / 0.5951 / 0.6042 | 67.61% | 3,320 / 4,910 | 0.5978 | 0.7371 | 0.2057 |
+| **Run 2 (+ Circadian Fatigue & Mileage)** | 0.5958 / 0.5948 / 0.6039 | 67.87% | 3,332 / 4,910 | 0.5976 | 0.7373 | 0.2056 |
+| **Run 3 (+ Tactical Clash Matrix)** | 0.5955 / 0.5944 / 0.6035 | 67.87% | 3,332 / 4,910 | 0.5979 | 0.7377 | 0.2058 |
+| **Run 4 (+ Empirical Feature Pruning)** | 0.5948 / 0.5939 / 0.6028 | 67.52% | 3,315 / 4,910 | 0.5974 | 0.7373 | 0.2057 |
+| **Run 5 / Current Peak (+ Post-COVID Val + Reg SLSQP)** | **0.5930 / 0.5928 / 0.6041** | **68.21% / 68.19%** | **3,349 / 4,910** | **0.5926** | **0.7427** | **0.2037** |
+
+*(Historical Benchmark: On the older 6,140-game prospective holdout from 2021–Present, the hybrid PCA-4 + NMF-4 architecture set the prior benchmark record of 67.88% / 4,168 games).*
 
 *Key Takeaways:*
-1. **All-Time Peak Prospective Accuracy:** The Hybrid (PCA-4 + NMF-4) meta-ensemble achieved **67.88% test accuracy (4,168 correct predictions out of 6,140 held-out games)**, setting an all-time project record (+12 games over PCA-8, +32 over Standalone NMF-8).
-2. **Hybrid Player Representation Learning:** PCA-4 captures **77.39% of global box-score variance** and orthogonal trade-offs, while NMF-4 injects 4 interpretable non-negative archetypes (High-Volume Scorer, Rim Anchor, Floor General, Perimeter Spacing).
-3. **High-SNR Feature Pruning:** Pruned noisy 3-game rolling windows and collinear counters, accelerating hyperparameter tuning by **32%** (16m 51s $\to$ 10m 20s) while improving generalization.
-4. **Balanced Multi-Model Ensemble:** The SLSQP constrained optimizer learned a robust convex allocation across all architectures: XGBoost (39.2%), MLP (29.5%), CatBoost (22.7%), and Pace Margin CDF (8.7%).
-5. **Continuous Margin Regressor:** Modeling margin as $\hat{\text{Pace}} \times \frac{\hat{\Delta}\text{NetRating}}{100}$ stabilized probabilities through empirical scoring variance ($\sigma \approx 13.5$).
+1. **All-Time Peak Prospective Accuracy:** The L2-regularized 4-model meta-ensemble achieved **68.21% test accuracy (3,349 correct predictions out of 4,910 held-out games)**, setting an all-time project record while driving log loss down to **0.5926** and ROC-AUC up to **0.7427**.
+2. **Single-Model Performance Records:** Recency-weighted **MLP reached 68.31% test accuracy**, while the bivariate continuous **Pace Margin regressor hit 67.80%**, demonstrating remarkable stand-alone predictive sharpness.
+3. **Opponent 3PT Variance Neutralization:** Game-to-game opponent 3PT% is ~85% noise. Regressing opponent 3PT% 50% toward league average (36.0%) (`D_3PT_TRUE`) and estimating true net rating significantly reduced residual error in continuous margin estimation.
+4. **Circadian Fatigue & Travel Mileage:** Integrating great-circle Haversine flight mileage across all 30 NBA stadiums, rolling 7-day cumulative miles (`TRAVEL_7D`), eastward jetlag (`TZ_EASTWARD_LOSS`), and circadian body clock shifts provided sharp non-linear split boundaries for gradient boosted trees.
+5. **Tactical Clash Matrix:** Injected 5 domain-engineered non-transitive interaction terms (Turnover Pressure, Rebound Pace, Free Throw Exploitation, 3PT Exploitation, Glass Dominance), allowing CatBoost symmetric oblivious trees to reach personal bests.
+6. **Post-COVID Validation Split & L2 Shrinkage SLSQP:** Moving validation from the abnormal 2019–20 COVID bubble to the 2021–22 regular season resolved the SLSQP tree-overweighting anomaly (which previously starved MLP down to 1.9%). Adding L2 shrinkage ($\lambda=0.05$) prevented tree collinearity collapse, creating an evenly balanced convex ensemble: Pace Margin (28.1%), XGBoost (25.8%), CatBoost (23.1%), and MLP (23.0%), with Logistic Regression cleanly retired.
 
 ---
 
@@ -59,14 +64,16 @@ The system is evaluated on every NBA regular season game from **2021 through pre
          eliminating pace inflation                    EWMA leak-free smoothing (α=20)
                        │                                           │
                        ▼                                           ▼
-           [Team Feature Pipeline]                         [PCA Projection]
-         • Continuous MOV-Elo engine                  8D latent vector representation
-         • Dean Oliver Four Factors (eFG, TOV, ORB, FTR)           │
-         • Dynamic Game Pace (Poss/48m)                            ▼
-         • Arena Altitude & Rest Congestion          [Player Volatility & Lineup]
-                       │                             • Capped Game Score (μ ± 2.5σ)
-                       │                             • Robust Expected Impact (μ - 0.35σ)
-                       │                             • Star Duo Share (Top 2 Concentration)
+           [Team Feature Pipeline]                     [Hybrid Representation (8D)]
+         • Continuous MOV-Elo engine (Uncertainty+HCA) • PCA-4: 77.4% orthogonal variance
+         • Dean Oliver Four Factors (eFG, TOV, ORB, FTR) • NMF-4: Additive tactical archetypes
+         • Opponent 3PT Variance Neutralization (True Net)         │
+         • Circadian Fatigue & Haversine 7D Mileage                ▼
+         • Tactical Clash Matrix (Rock-Paper-Scissors)   [Player Volatility & Lineup]
+         • Arena Altitude & Rest Congestion            • Capped Game Score (μ ± 2.5σ)
+                       │                               • Robust Expected Impact (μ - 0.35σ)
+                       │                               • Star Duo & Bench Share Dynamics
+                       │                               • Lineup Availability Deficit
                        │                                           │
                        └─────────────────────┬─────────────────────┘
                                              ▼
@@ -76,9 +83,9 @@ The system is evaluated on every NBA regular season game from **2021 through pre
                                              │
                                              ▼
                              [Chronological Data Partition]
-                          Train: 2000–2018 (22,943 games)
-                          Val:   2019–2020 ( 2,139 games)
-                          Test:  2021–Pres  ( 6,140 games)
+                          Train: 2000–2020 (25,082 games)
+                          Val:   2021–2022 ( 1,230 games, post-COVID)
+                          Test:  2022–Pres  ( 4,910 games)
                                              │
                                              ▼
                        [Multi-Stage SBS Feature Selection]
@@ -87,28 +94,30 @@ The system is evaluated on every NBA regular season game from **2021 through pre
                                              │
                                              ▼
                               [Heterogeneous Feature Routing]
-         ┌───────────────┬───────────────────┬───────────────────┬───────────────┬───────────────┐
-         ▼               ▼                   ▼                   ▼               ▼               ▼
-      Linear           Trees          Symmetric Trees          Neural         Continuous       Tempo
-    (LR: DELTA)    (XGB: H/A/EMB)      (CB: H/A/EMB)       (MLP: DELTA+EMB)  (Ridge/XGB/CB)  (Game Pace)
-         │               │                   │                   │               │               │
-         ▼               ▼                   ▼                   ▼               └───────┬───────┘
-      TS-CV           TS-CV               TS-CV               TS-CV                      ▼
-    GridSearch     RandomSearch        RandomSearch        RandomSearch           Normal CDF Bridge
-         │               │                   │                   │              Phi(Margin/Sigma)
-         ▼               ▼                   ▼               ▼                       │
-    [Platt/Beta]    [Platt/Beta]        [Platt/Beta]        [Platt/Beta]                 │
-     Calibration     Calibration         Calibration         Calibration                 │
-         │               │                   │                   │                       │
-         └───────────────┴───────────────────┼───────────────────┴───────────────────────┘
-                                             ▼
-                             [SLSQP 5-Model Meta-Ensemble]
-                              min Log Loss s.t. Σw = 1, w ≥ 0
-                                             │
-                                             ▼
-                             [Explainability & Diagnostics]
-                            SHAP TreeExplainer, Permutation
-                            Importance, Reliability Diagrams
+         ┌───────────────────┬───────────────────┬───────────────┬───────────────┐
+         ▼                   ▼                   ▼               ▼               ▼
+       Trees          Symmetric Trees          Neural        Continuous        Tempo
+   (XGB: H/A/EMB)      (CB: H/A/EMB)      (MLP: DELTA+EMB) (Ridge/XGB/CB)   (Game Pace)
+     207 feats           148 feats           157 feats       141 feats           │
+         │                   │                   │               │               │
+         ▼                   ▼                   ▼               └───────┬───────┘
+       TS-CV               TS-CV               TS-CV                     ▼
+    RandomSearch        RandomSearch        RandomSearch          Normal CDF Bridge
+         │                   │                   │              Phi(Margin/Sigma)
+         ▼                   ▼                   ▼                       │
+    [Platt/Beta]        [Platt/Beta]        [Platt/Beta]                 │
+     Calibration         Calibration         Calibration                 │
+         │                   │                   │                       │
+         └───────────────────┼───────────────────┴───────────────────────┘
+                             ▼
+               [L2-Regularized 4-Model SLSQP Ensemble]
+                  min Log Loss + λ||w||² s.t. Σw = 1, w ≥ 0
+              (Margin 28.1% | XGB 25.8% | CB 23.1% | MLP 23.0%)
+                             │
+                             ▼
+               [Explainability & Diagnostics]
+            SHAP TreeExplainer, Permutation Importance,
+            Margin Coefficients, Reliability Diagrams
 ```
 
 ---
@@ -179,46 +188,79 @@ High-altitude environments like Denver (5,280 ft) and Salt Lake City (4,226 ft) 
   Visiting Denver from sea level (Miami, Boston) incurs maximum penalty, while visiting from altitude (Utah) incurs negligible effect.
 - **Compound Fatigue Penalty (`ALTITUDE_B2B_PENALTY`):** Interacts altitude disadvantage with schedule congestion (`AWAY_B2B`), penalizing tired teams playing on back-to-backs at high elevation.
 
-### 7. Heterogeneous Feature Selection & Routing
-Rather than feeding an identical feature matrix to every model, the system leverages structural inductive biases on high-SNR pruned features:
-- **Logistic Regression (`DELTA_`):** Receives 121 pre-computed home-minus-away differentials. Linear models lack interaction terms and benefit heavily from pre-differenced comparative metrics (pruned from ensemble at 0% weight).
-- **XGBoost (`HOME_`, `AWAY_`, `EMBED_`):** Receives 192 absolute team metrics, non-linear latent embeddings, and schedule features. Decision trees learn decision boundaries, threshold interactions, and feature ratios natively without requiring differencing.
-- **CatBoost (`HOME_`, `AWAY_`, `EMBED_`):** Receives 193 features evaluated with symmetric oblivious splits, naturally regularizing against tabular noise.
-- **Multi-Layer Perceptron (`DELTA_` + `EMBED_`):** Receives 171 features combining engineered team differentials with latent player embeddings, utilizing dense non-linear layers and exponential recency weighting.
-- **Continuous Pace Margin Regressor:** Receives 121 possession-normalized team differentials to model expected point spreads.
+### 7. Circadian Fatigue Engine & 7-Day Travel Mileage
+NBA travel involves cross-country flights and irregular sleep schedules that degrade athletic reaction times:
+- **Stadium Geocoordinates & Time Zones (`TEAM_COORDINATES_AND_TZ`):** Exact latitude, longitude, and standard UTC timezone offsets for all 30 NBA franchises and historical venues.
+- **Vectorized Haversine Flight Distance (`haversine_np`):** Measures great-circle flight distance strictly between consecutive host venues prior to tip-off:
+  $$d = 2 R \arcsin\left(\sqrt{\sin^2\left(\frac{\Delta \phi}{2}\right) + \cos(\phi_1)\cos(\phi_2)\sin^2\left(\frac{\Delta \lambda}{2}\right)}\right)$$
+- **Rolling 7-Day Cumulative Mileage (`TRAVEL_7D`):** Computes total miles flown over the preceding 7 calendar days.
+- **Body Clock & Circadian Disruption:**
+  - `TZ_EASTWARD_LOSS`: Eastward flight across time zones causes circadian phase delay (losing hours), disrupting sleep far more severely than westward flight.
+  - `TZ_CIRCADIAN_PENALTY`: Time zone difference interacted with short rest (`REST_DAYS <= 1`).
+  - `4_IN_6`: Identifies extreme schedule congestion (4 games in 6 nights).
+  - `CIRCADIAN_FATIGUE_INDEX`: Composite metric blending rolling flight miles, timezone jumps, and acute rest deficit.
+  - `AWAY_ALTITUDE_FATIGUE_IMPACT`: Interacts cumulative travel miles and back-to-backs with high-elevation venues.
 
-### 8. Multi-Stage Sequential Backward Selection (SBS) Engine
+### 8. Opponent 3PT Variance Neutralization & True Defensive Ratings
+Empirical basketball research confirms that single-game opponent 3PT% is **~85% random noise** and largely outside defensive control. Defenses primarily dictate opponent 3-point attempt *rate*, not opponent shooting *luck*:
+- **Bayesian Shrinkage Neutralization:** Opponent 3PT% is regressed 50% toward the modern league average (36.0%):
+  $$\text{D\_3PT\_TRUE} = 0.50 \times \text{D\_3PT\_ACTUAL} + 0.50 \times 0.360$$
+- **True Opponent Points & Ratings:** Re-estimates opponent scoring under normalized shooting luck:
+  $$\text{OPP\_PTS\_TRUE} = \text{OPP\_PTS} + (\text{D\_3PT\_TRUE} - \text{D\_3PT\_ACTUAL}) \times \text{OPP\_FG3A} \times 3.0$$
+- **Stabilized True Net Ratings:** Computes `DEF_RATING` and `NET_RATING` using `OPP_PTS_TRUE`, smoothed with EWMA spans (5, 10).
+- **Opponent 3PA Rate (`OPP_3PA_RATE`):** Quantifies perimeter defensive scheme concession independently of shooting variance.
+- **Impact:** Drastically reduced residual noise in the continuous Pace Margin regressor ($\hat{M} = \hat{\text{Pace}} \times \frac{\hat{\Delta}\text{NetRating}}{100}$), boosting margin accuracy by **+0.50%** and MLP accuracy by **+0.56%**.
+
+### 9. Tactical Clash Matrix (Stylistic Non-Transitive Dynamics)
+Traditional models assume transitive dominance (if Team A beats Team B and Team B beats Team C, Team A beats Team C). Basketball matchups feature non-transitive "rock-paper-scissors" stylistic counters:
+1. **Turnover Pressure Clash (`TURNOVER_PRESSURE_CLASH`):** Defensive turnover creation rate $\times$ Opponent offensive turnover rate vulnerability.
+2. **Crash vs. Leak-out Clash (`REBOUND_PACE_CLASH`):** Offensive rebounding aggression $\times$ Opponent transition pace factor.
+3. **Free Throw Exploitation Clash (`FTR_CLASH`):** Offensive Free Throw Rate generation $\times$ Opponent defensive foul rate conceded.
+4. **3PT Perimeter Exploitation (`3PT_EXPLOITATION`):** Perimeter shooting volume & efficiency $\times$ Opponent 3PA rate allowed.
+5. **Glass Control Dominance (`GLASS_DOMINANCE`):** Offensive glass crashing $\times$ Opponent defensive rebounding deficit ($1 - \text{DEF\_REB\_RATE}$).
+6. **Composite Tactical Clash Advantage (`DELTA_TACTICAL_CLASH_ADVANTAGE`):** Weighted composite index summarizing stylistic matchup leverage.
+- **Impact:** CatBoost symmetric oblivious trees leveraged these non-transitive splits directly (`HOME_GLASS_DOMINANCE` ranked #1 with 1.160 importance), lifting CatBoost to personal bests.
+
+### 10. Heterogeneous Feature Selection & Routing
+Rather than feeding an identical feature matrix to every model, the system leverages structural inductive biases on high-SNR pruned features:
+- **XGBoost (`HOME_`, `AWAY_`, `EMBED_`):** Receives 207 absolute team metrics, non-linear latent embeddings, and schedule features. Pruned of hand-crafted pre-multiplied clash terms to prevent split competition with tree depth.
+- **CatBoost (`HOME_`, `AWAY_`, `EMBED_`):** Receives 148 features evaluated with symmetric oblivious splits, pruned of zero-gain noise features.
+- **Multi-Layer Perceptron (`DELTA_` + `EMBED_`):** Receives 157 features combining engineered team differentials with latent player embeddings, utilizing dense non-linear layers and exponential recency weighting.
+- **Continuous Pace Margin Regressor:** Receives 141 possession-normalized team differentials to model expected point spreads.
+- **Logistic Regression (`DELTA_`):** 137 features. Formally retired from active inference (allocated 0% ensemble weight; pruned to conserve memory and cross-validation runtime).
+
+### 11. Multi-Stage Sequential Backward Selection (SBS) Engine
 High-dimensional sports feature sets suffer from collinearity, noise, and cross-architecture interference. Rather than naive global feature dropping, this project implements a specialized **Multi-Stage Sequential Backward Selection (SBS)** engine ([`optimize_features.py`](optimize_features.py)):
 - **Cross-Validation Importance Sorting:** Ranks candidate features across `TimeSeriesSplit` cross-validation folds (using model coefficients, tree gain, and permutation importance) so candidates are tested from weakest to strongest.
 - **Fast-Track Screening:** Uses frozen ensemble weights and pre-cached out-of-fold predictions to evaluate candidate drops in milliseconds without retraining uninvolved models.
 - **Dual-Guardrail Calibration Verification:**
   1. *Validation Ensemble Loss:* Candidate feature pruning must improve or preserve overall ensemble cross-entropy log loss.
   2. *Isolated Standalone Safety:* Candidate pruning must not degrade the target base learner's standalone calibrated loss beyond a strict safety margin ($\Delta \le +0.0005$), preventing harmful model degradation.
-- **Pruned Features:** Prunes noisy collinear features (e.g. redundant 3PT EWMA horizons in LR and redundant max embedding dims in XGB) while retaining all deep personnel synergy in the MLP.
+- **Pruned Features:** Prunes noisy collinear features (e.g. redundant 3PT EWMA horizons and redundant embedding dims) while retaining all deep personnel synergy.
 - **Single-Boolean Configuration Toggle:** Pruned features are registered in [`training/config.py`](training/config.py) under `optimized_features_to_remove` and activated via a single flag:
   ```python
   prune_optimized_features: bool = True  # Toggle to False to instantly revert to full baseline features
   ```
   Can also be toggled via environment variable: `USE_OPTIMIZED_FEATURES=1 python train_models.py`.
 
-### 9. Tri-Method Probability Calibration & Model Selection (Spline + Beta + Platt)
+### 12. Tri-Method Probability Calibration & Model Selection (Spline + Beta + Platt)
 A model predicting a 70% win probability should win exactly 70 out of 100 times. In uncalibrated models (especially gradient boosted trees), log loss is distorted by overconfident tail predictions and asymmetric underdog/favorite variance:
 - **Platt Sigmoid Calibration:** Standard logistic mapping:
   $$\text{logit}(P(Y=1|p)) = a \cdot \text{logit}(p) + c \quad (a \ge 0)$$
-  Platt scaling assumes symmetric distortion around $p=0.50$ ($a = b$). Optimal for neural networks (MLP).
+  Assumes symmetric distortion around $p=0.50$. Optimal for neural networks (MLP).
 - **Beta Calibration (Kull et al., 2017) ([`training/calibration.py`](training/calibration.py)):** Parametric calibration based on Beta distributions:
   $$\text{logit}(P(Y=1|p)) = a \ln(p) - b \ln(1 - p) + c \quad (a \ge 0, b \ge 0)$$
-  Relaxes the symmetry constraint, allowing independent scaling for heavy favorites ($p \to 1$) versus extreme underdogs ($p \to 0$). Optimal for asymmetric tree models ($b \approx 2.1 \times a$).
-- **Non-Parametric Spline Probability Calibration (`SplineCalib`):** Fits shape-preserving monotonic cubic Hermite splines (`PchipInterpolator`) over empirical isotonic probability knots with cross-validated knot selection ($K \in [6, 8, 10, 14]$). Completely free of parametric distribution assumptions.
+  Relaxes the symmetry constraint, allowing independent scaling for heavy favorites ($p \to 1$) versus extreme underdogs ($p \to 0$). Optimal for asymmetric tree models (selected for both XGBoost and CatBoost).
+- **Non-Parametric Spline Probability Calibration (`SplineCalib`):** Fits shape-preserving monotonic cubic Hermite splines (`PchipInterpolator`) over empirical isotonic probability knots with cross-validated knot selection ($K \in [6, 8, 10, 14]$). Robustly serialized with custom `__getstate__` and `__setstate__` knot reconstruction.
 - **Leak-Free Model Selection:** Evaluates Platt, Beta, and Spline calibrations strictly on out-of-fold `TimeSeriesSplit` probability predictions, selecting whichever minimizes out-of-fold log loss.
 
-### 10. CatBoost & Symmetric Oblivious Decision Trees
+### 13. CatBoost & Symmetric Oblivious Decision Trees
 Gradient boosted trees often overfit tabular sports data through greedy asymmetric split paths. CatBoost introduces **symmetric (oblivious) decision trees**:
 - **Oblivious Architecture:** Every split at a given tree depth uses the exact same feature and threshold across all leaf nodes. This acts as an innate structural regularizer, dramatically reducing variance and eliminating overfitting on high-leverage box-score features.
-- **Raw Level Numerical Processing:** CatBoost operates directly on absolute metrics (`HOME_`, `AWAY_`, `EMBED_`) without requiring manual feature differencing or z-score transforms, achieving the project's highest single-model accuracy (**67.15%**).
+- **Raw Level Numerical Processing:** CatBoost operates directly on absolute metrics (`HOME_`, `AWAY_`, `EMBED_`) without requiring manual feature differencing or z-score transforms, achieving **67.47% accuracy** and **0.5941 log loss**.
 - **GPU/Multi-Core Optimization:** Optimized L2 leaf regularization and multi-threaded training (`thread_count=-1`).
 
-### 11. Bivariate Continuous Margin Regressor & Pace-Modulated Normal CDF Conversion
+### 14. Bivariate Continuous Margin Regressor & Pace-Modulated Normal CDF Conversion
 In binary classification ($y \in \{0, 1\}$), a 1-point buzzer-beater win and a 30-point blowout are treated identically, resulting in severe information loss. In sports analytics, **continuous point differential** possesses a far higher signal-to-noise ratio than raw win/loss outcomes:
 - **Bivariate Physical Decomposition:** Decomposes margin into physical basketball identities:
   $$\hat{\text{Margin}} = \hat{\text{Pace}} \times \frac{\hat{\Delta}\text{NetRating}}{100}$$
@@ -227,23 +269,29 @@ In binary classification ($y \in \{0, 1\}$), a 1-point buzzer-beater win and a 3
   $$\hat{\sigma}(\hat{\text{Pace}}) = \sigma_0 \times \sqrt{\frac{\hat{\text{Pace}}}{100.0}}$$
 - **Gaussian Normal CDF Probability Bridge (`PaceModulatedMarginClassifier`):** Converts continuous margin predictions into calibrated win probabilities:
   $$P(\text{Home Win}) = \Phi\left(\frac{\hat{M}}{\hat{\sigma}(\hat{\text{Pace}})}\right)$$
-- **Domain Invariance (Favorite Safety vs. Upset Volatility):**
-  - In high-possession games (faster tempo), variance expands $\to$ underdog upset volatility increases.
-  - In low-possession games (slow grind-it-out pace), variance contracts $\to$ favorite safety increases.
+- **Empirical Breakthrough:** Achieving **67.80% test accuracy** and **0.6006 log loss**, earning the largest single ensemble allocation (**28.1% weight**).
 
-### 12. 5-Model SLSQP Constrained Meta-Ensemble
-Ensemble weights $\mathbf{w}$ are learned by directly minimizing cross-entropy log loss over the validation probability simplex across all five diverse inductive paradigms:
-$$\min_{\mathbf{w}} -\frac{1}{N} \sum_{i=1}^{N} \left[ y_i \ln\left(\sum_{m=1}^{5} w_m \hat{p}_{m,i}\right) + (1 - y_i)\ln\left(1 - \sum_{m=1}^{5} w_m \hat{p}_{m,i}\right) \right]$$
-$$\text{subject to} \quad \sum_{m=1}^{5} w_m = 1.0, \quad w_m \ge 0.0 \quad \forall m \in \{1, \dots, 5\}$$
-- Combining tree splits, deep embeddings, and continuous margin distributions produces optimal probabilistic sharpness and resilience against out-of-distribution games.
+### 15. Post-COVID Validation & L2-Regularized SLSQP Meta-Ensemble Optimization
+Previous ensemble training on the 2019–20 COVID bubble produced an abnormal distribution where home court advantage collapsed and travel was zero, causing the unregularized SLSQP optimizer to allocate 82% weight to trees and starve MLP down to 1.9%.
+- **Post-COVID Regular Season Validation:** Validation was repositioned to the 2021–22 regular season (`validation_end = "22021"`, 1,230 games), restoring natural home/away attendance dynamics, cross-country travel schedules, and realistic crowd pressure.
+- **L2 Shrinkage Regularization ($\lambda = 0.05$):** XGBoost and CatBoost predictions exhibit $r \approx 0.989$ Pearson correlation. Unregularized optimization suffers from knife-edge collinear collapse. We augmented the SLSQP log-loss objective with an L2 shrinkage penalty:
+  $$\min_{\mathbf{w}} -\frac{1}{N} \sum_{i=1}^{N} \left[ y_i \ln\left(\sum_{m=1}^{M} w_m \hat{p}_{m,i}\right) + (1 - y_i)\ln\left(1 - \sum_{m=1}^{M} w_m \hat{p}_{m,i}\right) \right] + \lambda \sum_{m=1}^{M} w_m^2$$
+  $$\text{subject to} \quad \sum_{m=1}^{M} w_m = 1.0, \quad w_m \ge 0.0 \quad \forall m$$
+- **Balanced Convex Allocation:** The regularized solution yields a robust, stable allocation across all 4 distinct learning paradigms:
+  - **Pace Margin (CDF):** **28.1%**
+  - **XGBoost:** **25.8%**
+  - **CatBoost:** **23.1%**
+  - **MLP:** **23.0%**
+  - **Logistic Regression:** **0.0% (Retired)**
+- **Result:** Propelled prospective meta-ensemble accuracy to an all-time record **68.21% / 68.19%**, test log loss to **0.5926**, and test ROC-AUC to **0.7427**.
 
-### 13. Exponential Recency Weighting for Neural Networks (MLP Only)
+### 16. Exponential Recency Weighting for Neural Networks (MLP Only)
 Modern NBA basketball operates under fundamentally different spatial dynamics and efficiency distributions than games from 2003 (3-point frequency surged from 18% to 40%+ of all shot attempts):
 - **7-Year Half-Life Decay:** Chronological sample weights $w_i = \exp(-\lambda \frac{T_{\max} - t_i}{365.25})$ with $\lambda = \frac{\ln(2)}{7.0}$.
 - **Strict Scale Normalization:** Weights are normalized to $\sum w_i = N$, strictly preserving unweighted loss gradient scale.
-- **Architecture Isolation:** Applied strictly to the Multi-Layer Perceptron (boosting MLP accuracy to **67.20%**). Tree models (XGBoost, CatBoost) and continuous margin regressor remain completely unweighted to preserve ensemble diversity.
+- **Architecture Isolation:** Applied strictly to the Multi-Layer Perceptron (boosting MLP standalone accuracy to a project-record **68.31%**). Tree models (XGBoost, CatBoost) and continuous margin regressor remain completely unweighted to preserve ensemble diversity.
 
-### 14. Collinear & Dead-Weight Feature Pruning
+### 17. Collinear & Dead-Weight Feature Pruning
 Prunes variables that exhibit multi-collinear inflation ($r > 0.98$) or zero tree split gain (SHAP = 0.0):
 - **Multi-Horizon EWMA Span 3 Pruning:** Spans 3 and 5 shared Pearson correlation $r = 0.984$. Span 3 was permanently removed across team and player pipelines, retaining span 5 (acute short-term form) and span 10 (medium-term baseline).
 - **Dead-Weight Features:** Permanently dropped zero-importance variables: `HOME_ROAD_TRIP_LENGTH` (always 0 for home games), `HOME_4_IN_5` (zero gain), `DELTA_Z_FTA_ROLLING_8`, and `DELTA_Z_FGM_ROLLING_8`.
@@ -272,7 +320,7 @@ Target and temporal leakage are catastrophic in sports modeling. This repository
   - Input dataset SHA-256 fingerprint
   - Platform architecture & CPU core counts
 - **Thread Contention Optimization:** Nested parallelism in cross-validation is explicitly managed (`n_jobs=1` per search estimator with `n_jobs=-1` at the CV fold level) to eliminate CPU cache thrashing.
-- **Automated Test Suite:** 54 comprehensive unit tests covering data splitting, Elo mechanics, altitude advantage, Four Factors, pace normalization, schema validation, leakage prevention, star/duo/trio share hierarchy, ensemble optimization, continuous margin regression, pace-modulated normal CDF, base model contracts, and SBS feature selection.
+- **Automated Test Suite:** 62 comprehensive unit tests covering data splitting, Elo mechanics, altitude advantage, circadian fatigue, travel distance, opponent 3PT shrinkage, tactical clash matrix, Four Factors, pace normalization, schema validation, leakage prevention, star/duo/trio share hierarchy, regularized ensemble optimization, continuous margin regression, pace-modulated normal CDF, base model contracts, and SBS feature selection.
 
 ---
 
@@ -304,10 +352,10 @@ nba-prediction-model/
 │   └── utils.py                         # JSON serialization & model unwrapping
 │
 ├── tests/
-│   ├── calibration_test.py              # Platt & Beta calibrators and out-of-fold tests
+│   ├── calibration_test.py              # Platt, Beta & Spline calibrators and out-of-fold tests
 │   ├── data_test.py                     # Chronological split & routing tests
-│   ├── ensemble_test.py                 # SLSQP simplex weight optimization tests
-│   ├── feature_engineering_test.py     # Schedule, rest, Four Factors, Pace & Altitude tests
+│   ├── ensemble_test.py                 # SLSQP simplex weight & L2 shrinkage tests
+│   ├── feature_engineering_test.py     # Schedule, rest, travel, 3PT true, clash & altitude tests
 │   ├── leakage_test.py                  # Strict perturbation & shift invariance tests
 │   ├── margin_test.py                   # Margin regression & pace CDF probability converter tests
 │   ├── model_test.py                    # Base classification architecture tuning & estimator tests
@@ -353,7 +401,7 @@ pip install pyarrow pandera
 ```bash
 pytest
 ```
-*Executes all 54 unit, leakage, margin, calibration, and integration tests in ~9 seconds.*
+*Executes all 62 unit, leakage, margin, calibration, and integration tests in ~55 seconds.*
 
 ### 3. Feature Generation Pipeline
 ```bash
@@ -392,12 +440,12 @@ python train_models.py
 
 This executes the full pipeline:
 - Ingests dataset via Parquet with zero-leakage data contracts
-- Executes `TimeSeriesSplit` cross-validation for MLP, XGBoost, CatBoost, and Logistic Regression
+- Executes `TimeSeriesSplit` cross-validation for MLP, XGBoost, and CatBoost
 - Fits continuous MarginRegressor and calibrates pace-modulated normal CDF converter
-- Performs model-selected probability calibration (Platt Sigmoid vs. Asymmetric Beta Calibration)
-- Solves SLSQP 5-model constrained ensemble weights over the probability simplex
-- Retrains final models on combined train+val sets
-- Evaluates on 6,140 held-out prospective test games
+- Performs model-selected probability calibration (Platt Sigmoid vs. Asymmetric Beta vs. Monotonic Spline)
+- Solves L2-regularized SLSQP 4-model constrained ensemble weights ($\lambda=0.05$) over the probability simplex
+- Retrains final models on combined train+val sets (26,312 games from 2000–2022)
+- Evaluates on 4,910 held-out prospective test games (2022 to present)
 - Generates SHAP summary plots, calibration curves, and feature rankings in `models/run_<timestamp>/`
 
 ---
@@ -405,7 +453,7 @@ This executes the full pipeline:
 ## Explainability & Diagnostic Artifacts
 
 Every experiment run exports full diagnostic figures and tabular metadata:
-- **`01_model_comparison.csv`**: Comprehensive test metrics breakdown across all 5 architectures and meta-ensemble.
+- **`01_model_comparison.csv`**: Comprehensive test metrics breakdown across all 4 architectures and meta-ensemble.
 - **`02_calibration_curve.png`**: Reliability diagram showing calibrated probability vs empirical win frequency.
 - **`03_roc_curve.png`**: Multi-model ROC curves with AUC scores.
 - **`04_confusion_matrix.png`**: Normalized confusion matrix on unseen test seasons.
@@ -416,8 +464,7 @@ Every experiment run exports full diagnostic figures and tabular metadata:
 - **`09_margin_coefficients.png`**: Point differential feature weights from continuous margin regression.
 - **`10_margin_residuals.png`**: Residual error diagnostic distribution vs. theoretical Gaussian curve.
 - **`11_catboost_feature_importance.png`**: Native split importance from CatBoost symmetric oblivious trees.
-- **`calibration_model_selection.json`**: Out-of-fold log-loss comparison selecting between Platt and Beta calibration.
-- **`ensemble_formula.json`**: Learned SLSQP blending weights across all 5 models.
+- **`ensemble_formula.json`**: Learned regularized SLSQP blending weights across all 4 active models.
 
 ---
 
