@@ -21,13 +21,6 @@ from training.data import compute_exponential_recency_weights
 from training.margin import MarginRegressor, PaceModulatedMarginClassifier
 
 # ======================================================
-# Output Artifact Filenames
-# ======================================================
-
-SCALER_STATS_FILE = "scaler_statistics.csv"
-
-
-# ======================================================
 # Transformation & Scaling Helpers
 # ======================================================
 
@@ -42,31 +35,17 @@ def _combine_splits(
 def _fit_and_apply_scaler(
     train_full: pd.DataFrame,
     test: pd.DataFrame,
-) -> Tuple[StandardScaler, np.ndarray, np.ndarray]:
+    val: Optional[pd.DataFrame] = None,
+) -> Tuple[StandardScaler, np.ndarray, np.ndarray, Optional[np.ndarray]]:
     """
     Fits a new StandardScaler on the combined historical dataset and scales
-    both full training and held-out test matrices.
+    full training, held-out test, and optionally validation matrices.
     """
     scaler = StandardScaler()
     train_full_scaled = scaler.fit_transform(train_full)
     test_scaled = scaler.transform(test)
-    return scaler, train_full_scaled, test_scaled
-
-
-def _export_scaler_statistics(
-    scaler: StandardScaler,
-    features: pd.Index | list[str],
-    output_path: Path,
-) -> None:
-    """Exports scaler means and standard deviations for reproducibility."""
-    stats_df = pd.DataFrame(
-        {
-            "Feature": list(features),
-            "Mean": scaler.mean_,
-            "Std": scaler.scale_,
-        }
-    )
-    stats_df.to_csv(output_path, index=False)
+    val_scaled = scaler.transform(val) if val is not None else None
+    return scaler, train_full_scaled, test_scaled, val_scaled
 
 
 # ======================================================
@@ -112,10 +91,13 @@ def _retrain_margin_pipeline(
     margin_train_full = _combine_splits(margin_fs.X_train, margin_fs.X_val)
     y_margin_full = _combine_splits(artifacts.data.y_margin_train, artifacts.data.y_margin_val)
 
-    scaler, train_scaled, test_scaled = _fit_and_apply_scaler(margin_train_full, margin_fs.X_test)
+    scaler, train_scaled, test_scaled, val_scaled = _fit_and_apply_scaler(
+        margin_train_full, margin_fs.X_test, val=margin_fs.X_val
+    )
     margin_fs.scaler = scaler
     margin_fs.X_train_full = margin_train_full
     margin_fs.X_train_full_processed = train_scaled
+    margin_fs.X_val_processed = val_scaled
     margin_fs.X_test_processed = test_scaled
 
     full_pace = (
@@ -166,7 +148,6 @@ def retrain_on_full_data(artifacts: TrainingArtifacts) -> None:
     data = artifacts.data
     mlp_train_full = _combine_splits(data.mlp.X_train, data.mlp.X_val)
     xgb_train_full = _combine_splits(data.xgb.X_train, data.xgb.X_val)
-    lr_train_full = _combine_splits(data.lr.X_train, data.lr.X_val)
     y_train_full = _combine_splits(data.y_train, data.y_val)
 
     # Compute full historical recency weights across combined train + val window
@@ -184,24 +165,9 @@ def retrain_on_full_data(artifacts: TrainingArtifacts) -> None:
         )
 
     # Fit and apply scalers
-    mlp_scaler, mlp_train_scaled, mlp_test_scaled = _fit_and_apply_scaler(
-        mlp_train_full, data.mlp.X_test
+    mlp_scaler, mlp_train_scaled, mlp_test_scaled, mlp_val_scaled = _fit_and_apply_scaler(
+        mlp_train_full, data.mlp.X_test, val=data.mlp.X_val
     )
-
-    if artifacts.lr.model is not None and data.lr is not None:
-        lr_scaler, lr_train_scaled, lr_test_scaled = _fit_and_apply_scaler(
-            lr_train_full, data.lr.X_test
-        )
-        _export_scaler_statistics(
-            lr_scaler, lr_train_full.columns, artifacts.output_dir / SCALER_STATS_FILE
-        )
-        artifacts.lr.final_model = _retrain_classifier(
-            artifacts.lr.model, lr_train_scaled, y_train_full, sample_weight=None
-        )
-        artifacts.lr.feature_set.scaler = lr_scaler
-        artifacts.lr.feature_set.X_train_full = lr_train_full
-        artifacts.lr.feature_set.X_train_full_processed = lr_train_scaled
-        artifacts.lr.feature_set.X_test_processed = lr_test_scaled
 
     # Retrain binary base classifiers with architecture-selective weighting
     artifacts.mlp.final_model = _retrain_classifier(
@@ -222,6 +188,7 @@ def retrain_on_full_data(artifacts: TrainingArtifacts) -> None:
     artifacts.mlp.feature_set.scaler = mlp_scaler
     artifacts.mlp.feature_set.X_train_full = mlp_train_full
     artifacts.mlp.feature_set.X_train_full_processed = mlp_train_scaled
+    artifacts.mlp.feature_set.X_val_processed = mlp_val_scaled
     artifacts.mlp.feature_set.X_test_processed = mlp_test_scaled
 
     artifacts.xgb.feature_set.X_train_full = xgb_train_full

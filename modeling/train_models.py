@@ -59,7 +59,7 @@ TOTAL_PIPELINE_STAGES = 6
 def create_output_directory() -> Tuple[Path, Path]:
     """Creates the timestamped experiment directory under models/."""
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    project_root = Path(__file__).resolve().parent
+    project_root = Path(__file__).resolve().parent.parent
     data_dir = project_root / "data"
     output_dir = project_root / "models" / f"run_{timestamp}"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -194,7 +194,6 @@ def run_stage_tuning(artifacts: TrainingArtifacts, config: TrainingConfig, outpu
             artifacts.mlp,
             artifacts.xgb,
             artifacts.catboost,
-            artifacts.lr,
         ) = tune_base_models(artifacts.data, config, output_dir)
         logging.getLogger(__name__).info("      Base models successfully tuned and calibrated.")
 
@@ -209,7 +208,6 @@ def run_stage_ensemble(artifacts: TrainingArtifacts) -> Dict[str, float]:
         weights, formula = learn_ensemble_weights(
             mlp=artifacts.mlp,
             xgb=artifacts.xgb,
-            lr=None,
             y_val=artifacts.data.y_val,
             catboost=artifacts.catboost,
             margin=artifacts.margin,

@@ -2,7 +2,7 @@
 Evaluates trained models and computes prospective testing classification metrics.
 
 This module generates out-of-sample probability forecasts across all fitted
-architectures (MLP, XGBoost, Logistic Regression, Pace-Modulated Margin Regressor,
+architectures (MLP, XGBoost, CatBoost, Pace-Modulated Margin Regressor,
 and the convex Ensemble). It assesses performance across complementary metrics:
 - Accuracy: Proportion of games where argmax(P(Home Win)) matched the winner
 - Log Loss: Cross-entropy penalizing overconfident miscalibrated errors
@@ -132,17 +132,6 @@ def _collect_test_probabilities(
             artifacts.catboost.feature_set.X_test
         )[:, 1]
         probs_dict["CatBoost"] = cb_probs
-
-    # Logistic Regression Model
-    if (
-        artifacts.lr.final_model is not None
-        and artifacts.lr.feature_set is not None
-        and artifacts.lr.feature_set.X_test_processed is not None
-    ):
-        lr_probs = artifacts.lr.final_model.predict_proba(
-            artifacts.lr.feature_set.X_test_processed
-        )[:, 1]
-        probs_dict["Logistic Regression"] = lr_probs
 
     # Margin Model
     margin_probs = _extract_margin_test_probabilities(artifacts)

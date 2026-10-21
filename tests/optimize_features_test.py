@@ -8,10 +8,11 @@ and fast-track logloss computations.
 import numpy as np
 import pandas as pd
 import pytest
-from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from xgboost import XGBClassifier
 
 from training.config import DatasetSummary, FeatureSet, TrainingData
-from optimize_features import (
+from modeling.optimize_features import (
     apply_model_specific_reduction,
     format_time,
     partial_fast_track,
@@ -45,14 +46,12 @@ def mock_training_data():
         train_games=6,
         validation_games=2,
         test_games=2,
-        lr_feature_names=["feat_a", "feat_b", "feat_c"],
         xgb_feature_names=["feat_a", "feat_b", "feat_c"],
         mlp_feature_names=["feat_a", "feat_b", "feat_c"],
     )
     return TrainingData(
         mlp=fs,
         xgb=FeatureSet(X_train=X_train.copy(), X_val=X_val.copy(), X_test=X_test.copy(), feature_names=["feat_a", "feat_b", "feat_c"]),
-        lr=FeatureSet(X_train=X_train.copy(), X_val=X_val.copy(), X_test=X_test.copy(), feature_names=["feat_a", "feat_b", "feat_c"]),
         y_train=y_train,
         y_val=y_val,
         y_test=y_test,
@@ -61,7 +60,7 @@ def mock_training_data():
 
 
 def test_apply_model_specific_reduction(mock_training_data):
-    removals = {"mlp": ["feat_b"], "xgb": ["feat_c"], "lr": []}
+    removals = {"mlp": ["feat_b"], "xgb": ["feat_c"]}
     reduced = apply_model_specific_reduction(mock_training_data, removals)
 
     assert "feat_b" not in reduced.mlp.feature_names
@@ -71,10 +70,7 @@ def test_apply_model_specific_reduction(mock_training_data):
 
     assert "feat_c" not in reduced.xgb.feature_names
     assert "feat_c" not in reduced.xgb.X_train.columns
-
-    assert len(reduced.lr.feature_names) == 3
     assert reduced.mlp.X_train_processed is not None
-    assert reduced.lr.X_train_processed is not None
 
 
 def test_format_time():
@@ -84,31 +80,30 @@ def test_format_time():
 
 
 def test_partial_fast_track_baseline_matching(mock_training_data):
-    removals = {"mlp": [], "xgb": [], "lr": []}
+    removals = {"mlp": [], "xgb": []}
     reduced = apply_model_specific_reduction(mock_training_data, removals)
 
-    clf = LogisticRegression(random_state=42)
-    clf.fit(reduced.lr.X_train_processed, reduced.y_train)
+    clf = XGBClassifier(n_estimators=5, max_depth=1, eval_metric="logloss", random_state=42)
+    clf.fit(reduced.xgb.X_train, reduced.y_train)
 
-    base_estimators = {"mlp": clf, "xgb": clf, "lr": clf}
+    base_estimators = {"mlp": clf, "xgb": clf}
     cached_probs = {
         "mlp": np.array([0.6, 0.4]),
         "xgb": np.array([0.6, 0.4]),
-        "lr": np.array([0.6, 0.4]),
     }
-    weights = np.array([0.0, 0.0, 1.0])
+    weights = np.array([0.0, 1.0])
 
-    base_loss = partial_fast_track("lr", reduced, base_estimators, cached_probs, weights)
+    base_loss = partial_fast_track("xgb", reduced, base_estimators, cached_probs, weights)
     assert isinstance(base_loss, float)
     assert base_loss > 0.0
 
     # Removing nothing yields exact same loss (diff = 0.0)
-    repeat_loss = partial_fast_track("lr", reduced, base_estimators, cached_probs, weights)
+    repeat_loss = partial_fast_track("xgb", reduced, base_estimators, cached_probs, weights)
     assert pytest.approx(base_loss - repeat_loss, abs=1e-9) == 0.0
 
 
 def test_get_model_importance_ranking():
-    from optimize_features import get_model_importance
+    from modeling.optimize_features import get_model_importance
     
     np.random.seed(42)
     n = 100
@@ -118,7 +113,7 @@ def test_get_model_importance_ranking():
     y = (x_pred > 0).astype(int)
     
     X = pd.DataFrame({"noise": x_noise, "signal": x_pred})
-    clf = LogisticRegression(random_state=42)
+    clf = DecisionTreeClassifier(max_depth=2, random_state=42)
     clf.fit(X, y)
     
     ranked = get_model_importance(clf, X, y, ["noise", "signal"], random_seed=42)
@@ -128,17 +123,17 @@ def test_get_model_importance_ranking():
 
 
 def test_fit_and_calibrate_single_model(mock_training_data):
-    from optimize_features import fit_and_calibrate_single_model
+    from modeling.optimize_features import fit_and_calibrate_single_model
     
-    removals = {"mlp": [], "xgb": [], "lr": []}
+    removals = {"mlp": [], "xgb": []}
     reduced = apply_model_specific_reduction(mock_training_data, removals)
-    base_lr = LogisticRegression(random_state=42)
+    base_xgb = XGBClassifier(n_estimators=5, max_depth=1, eval_metric="logloss", random_state=42)
     
-    cal_lr, probs, standalone_loss = fit_and_calibrate_single_model(
-        "lr", base_lr, reduced, cv_folds=2
+    cal_xgb, probs, standalone_loss = fit_and_calibrate_single_model(
+        "xgb", base_xgb, reduced, cv_folds=2
     )
     
-    assert cal_lr is not None
+    assert cal_xgb is not None
     assert len(probs) == len(mock_training_data.y_val)
     assert isinstance(standalone_loss, float)
     assert 0.0 < standalone_loss < 2.0

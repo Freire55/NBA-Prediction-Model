@@ -21,18 +21,21 @@ import pandas as pd
 from sklearn.decomposition import NMF, PCA
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
-from feature_engineering_players import calculate_game_score
+try:
+    from feature_engineering.feature_engineering_players import calculate_game_score
+except ImportError:
+    from feature_engineering_players import calculate_game_score
 
 # ======================================================
 # Configuration
 # ======================================================
 
-DATA_DIR = Path(__file__).resolve().parent / "data"
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 INPUT_FILE = "raw_player_game_logs.csv"
 OUTPUT_FILE = "player_embeddings.csv"
 
 # Align this exactly with `train_end` in config.py!
-TRAIN_END_SEASON = "22018"
+TRAIN_END_SEASON = "22020"
 EWMA_HALFLIFE = 20
 N_COMPONENTS = 8
 

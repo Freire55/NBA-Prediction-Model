@@ -21,13 +21,16 @@ import logging
 import numpy as np
 import pandas as pd
 
-from feature_engineering import calculate_altitude_advantage, load_altitude_map
+try:
+    from feature_engineering.feature_engineering import calculate_altitude_advantage, load_altitude_map
+except ImportError:
+    from feature_engineering import calculate_altitude_advantage, load_altitude_map
 
 # ======================================================
 # Constants & Configuration
 # ======================================================
 
-DATA_DIR = Path(__file__).resolve().parent / "data"
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 ROLLING_WINDOW = 8
 DEFAULT_VALUE = 0.0
@@ -175,7 +178,8 @@ def calculate_playmaker_concentration(
 
 HISTORICAL_GAME_SCORE_MEAN = 8.0
 HISTORICAL_GAME_SCORE_STD = 5.0
-HISTORICAL_ROSTER_FORM_PRIOR = 70.0
+HISTORICAL_ROSTER_FORM_PRIOR = 2300.0
+HISTORICAL_ROSTER_FORM_240_PRIOR = 2300.0
 
 def rolling_mean(series: pd.Series, rolling_window: int = ROLLING_WINDOW) -> pd.Series:
     """Computes a rolling mean using only prior observations."""
@@ -239,10 +243,15 @@ def add_volatility_features(
 # ======================================================
 
 def load_input_datasets(data_dir: Path = DATA_DIR) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Loads raw player logs, base matchups, and PCA embeddings."""
-    logs_df = pd.read_csv(data_dir / GAME_LOGS_FILE)
-    matchups_df = pd.read_csv(data_dir / MATCHUPS_FILE)
-    embeddings_df = pd.read_csv(data_dir / "player_embeddings.csv")
+    """Loads raw player logs, base matchups, and PCA embeddings (preferring Parquet)."""
+    logs_parquet = (data_dir / GAME_LOGS_FILE).with_suffix(".parquet")
+    logs_df = pd.read_parquet(logs_parquet) if logs_parquet.exists() else pd.read_csv(data_dir / GAME_LOGS_FILE)
+
+    matchups_parquet = (data_dir / MATCHUPS_FILE).with_suffix(".parquet")
+    matchups_df = pd.read_parquet(matchups_parquet) if matchups_parquet.exists() else pd.read_csv(data_dir / MATCHUPS_FILE)
+
+    embed_parquet = (data_dir / "player_embeddings.parquet")
+    embeddings_df = pd.read_parquet(embed_parquet) if embed_parquet.exists() else pd.read_csv(data_dir / "player_embeddings.csv")
 
     logs_df["PLAYER_ID"] = logs_df["PLAYER_ID"].astype(str)
     logs_df["GAME_DATE"] = pd.to_datetime(logs_df["GAME_DATE"])
@@ -296,33 +305,56 @@ def compute_player_rolling_metrics(logs_df: pd.DataFrame) -> pd.DataFrame:
     """Calculates chronologically pure rolling performance, volume, and fatigue per player."""
     player_groups = logs_df.groupby("PLAYER_ID")
 
-    logs_df = logs_df.assign(
-        PLAYER_FORM_ROLLING_5=player_groups["GAME_SCORE"].transform(rolling_mean, rolling_window=5),
-        PLAYER_FORM_ROLLING_10=player_groups["GAME_SCORE"].transform(rolling_mean, rolling_window=10),
+    rolling_5_cols = [
+        "GAME_SCORE",
+        "OBPM_PROXY",
+        "DBPM_PROXY",
+        "PLAYER_FOUR_FACTOR_EFG",
+        "PLAYER_FOUR_FACTOR_TOV",
+        "PLAYER_FOUR_FACTOR_OREB",
+        "PLAYER_FOUR_FACTOR_FTR",
+        "FG3A",
+        "FG3M",
+        "AST",
+    ]
+    r5 = player_groups[rolling_5_cols].transform(rolling_mean, rolling_window=5)
 
-        PLAYER_OBPM_ROLLING_5=player_groups["OBPM_PROXY"].transform(rolling_mean, rolling_window=5).fillna(0.0),
-        PLAYER_DBPM_ROLLING_5=player_groups["DBPM_PROXY"].transform(rolling_mean, rolling_window=5).fillna(0.0),
+    rolling_10_cols = [
+        "GAME_SCORE",
+        "OBPM_PROXY",
+        "DBPM_PROXY",
+        "PLAYER_FOUR_FACTOR_EFG",
+        "PLAYER_FOUR_FACTOR_TOV",
+        "PLAYER_FOUR_FACTOR_OREB",
+        "PLAYER_FOUR_FACTOR_FTR",
+    ]
+    r10 = player_groups[rolling_10_cols].transform(rolling_mean, rolling_window=10)
 
-        PLAYER_OBPM_ROLLING_10=player_groups["OBPM_PROXY"].transform(rolling_mean, rolling_window=10).fillna(0.0),
-        PLAYER_DBPM_ROLLING_10=player_groups["DBPM_PROXY"].transform(rolling_mean, rolling_window=10).fillna(0.0),
+    logs_df["PLAYER_FORM_ROLLING_5"] = r5["GAME_SCORE"]
+    logs_df["PLAYER_FORM_ROLLING_10"] = r10["GAME_SCORE"]
 
-        PLAYER_FOUR_FACTOR_EFG_ROLLING_5=player_groups["PLAYER_FOUR_FACTOR_EFG"].transform(rolling_mean, rolling_window=5).fillna(0.50),
-        PLAYER_FOUR_FACTOR_TOV_ROLLING_5=player_groups["PLAYER_FOUR_FACTOR_TOV"].transform(rolling_mean, rolling_window=5).fillna(0.12),
-        PLAYER_FOUR_FACTOR_OREB_ROLLING_5=player_groups["PLAYER_FOUR_FACTOR_OREB"].transform(rolling_mean, rolling_window=5).fillna(0.03),
-        PLAYER_FOUR_FACTOR_FTR_ROLLING_5=player_groups["PLAYER_FOUR_FACTOR_FTR"].transform(rolling_mean, rolling_window=5).fillna(0.25),
+    logs_df["PLAYER_OBPM_ROLLING_5"] = r5["OBPM_PROXY"].fillna(0.0)
+    logs_df["PLAYER_DBPM_ROLLING_5"] = r5["DBPM_PROXY"].fillna(0.0)
 
-        PLAYER_FOUR_FACTOR_EFG_ROLLING_10=player_groups["PLAYER_FOUR_FACTOR_EFG"].transform(rolling_mean, rolling_window=10).fillna(0.50),
-        PLAYER_FOUR_FACTOR_TOV_ROLLING_10=player_groups["PLAYER_FOUR_FACTOR_TOV"].transform(rolling_mean, rolling_window=10).fillna(0.12),
-        PLAYER_FOUR_FACTOR_OREB_ROLLING_10=player_groups["PLAYER_FOUR_FACTOR_OREB"].transform(rolling_mean, rolling_window=10).fillna(0.03),
-        PLAYER_FOUR_FACTOR_FTR_ROLLING_10=player_groups["PLAYER_FOUR_FACTOR_FTR"].transform(rolling_mean, rolling_window=10).fillna(0.25),
+    logs_df["PLAYER_OBPM_ROLLING_10"] = r10["OBPM_PROXY"].fillna(0.0)
+    logs_df["PLAYER_DBPM_ROLLING_10"] = r10["DBPM_PROXY"].fillna(0.0)
 
-        PLAYER_FG3A_ROLLING_5=player_groups["FG3A"].transform(rolling_mean, rolling_window=5).fillna(0.0),
-        PLAYER_FG3M_ROLLING_5=player_groups["FG3M"].transform(rolling_mean, rolling_window=5).fillna(0.0),
-        PLAYER_AST_ROLLING_5=player_groups["AST"].transform(rolling_mean, rolling_window=5).fillna(0.0),
+    logs_df["PLAYER_FOUR_FACTOR_EFG_ROLLING_5"] = r5["PLAYER_FOUR_FACTOR_EFG"].fillna(0.50)
+    logs_df["PLAYER_FOUR_FACTOR_TOV_ROLLING_5"] = r5["PLAYER_FOUR_FACTOR_TOV"].fillna(0.12)
+    logs_df["PLAYER_FOUR_FACTOR_OREB_ROLLING_5"] = r5["PLAYER_FOUR_FACTOR_OREB"].fillna(0.03)
+    logs_df["PLAYER_FOUR_FACTOR_FTR_ROLLING_5"] = r5["PLAYER_FOUR_FACTOR_FTR"].fillna(0.25)
 
-        FATIGUE_EWMA_MINUTES_5=player_groups["MINUTES_NUM"].transform(lambda x: ewma(x, span=5)),
-        FATIGUE_EWMA_MINUTES_10=player_groups["MINUTES_NUM"].transform(lambda x: ewma(x, span=10)),
-    )
+    logs_df["PLAYER_FOUR_FACTOR_EFG_ROLLING_10"] = r10["PLAYER_FOUR_FACTOR_EFG"].fillna(0.50)
+    logs_df["PLAYER_FOUR_FACTOR_TOV_ROLLING_10"] = r10["PLAYER_FOUR_FACTOR_TOV"].fillna(0.12)
+    logs_df["PLAYER_FOUR_FACTOR_OREB_ROLLING_10"] = r10["PLAYER_FOUR_FACTOR_OREB"].fillna(0.03)
+    logs_df["PLAYER_FOUR_FACTOR_FTR_ROLLING_10"] = r10["PLAYER_FOUR_FACTOR_FTR"].fillna(0.25)
+
+    logs_df["PLAYER_FG3A_ROLLING_5"] = r5["FG3A"].fillna(0.0)
+    logs_df["PLAYER_FG3M_ROLLING_5"] = r5["FG3M"].fillna(0.0)
+    logs_df["PLAYER_AST_ROLLING_5"] = r5["AST"].fillna(0.0)
+
+    logs_df["FATIGUE_EWMA_MINUTES_5"] = player_groups["MINUTES_NUM"].transform(lambda x: ewma(x, span=5))
+    logs_df["FATIGUE_EWMA_MINUTES_10"] = player_groups["MINUTES_NUM"].transform(lambda x: ewma(x, span=10))
 
     # Acute vs Chronic fatigue surge (short-term minutes spike over baseline)
     logs_df["FATIGUE_SURGE"] = (
@@ -396,6 +428,30 @@ def compute_player_expected_impacts(
     embed_cols = sorted([c for c in embeddings_df.columns if c.startswith("EMBED_")])
     logs_df[embed_cols] = logs_df[embed_cols].fillna(0.0)
 
+    # 240-Minute Rotation Reallocation:
+    # Scale active players' projected playing time so sum of minutes equals 240.0 regulation minutes
+    game_team_groups = logs_df.groupby(["GAME_ID", "TEAM_ID"])
+    team_expected_mins = game_team_groups["FATIGUE_EWMA_MINUTES_5"].transform("sum")
+    team_player_count = game_team_groups["PLAYER_ID"].transform("count").clip(lower=1)
+    has_prior_mins = team_expected_mins > 10.0
+    safe_scale = np.where(has_prior_mins, 240.0 / team_expected_mins, 0.0)
+    logs_df["MINUTES_NORM_240"] = np.where(
+        has_prior_mins,
+        logs_df["FATIGUE_EWMA_MINUTES_5"] * safe_scale,
+        240.0 / team_player_count,
+    )
+
+    # 240-Minute reallocated expected impact & BPM
+    logs_df["EXPECTED_IMPACT_240"] = (
+        logs_df["PLAYER_FORM_ROLLING_5"] * logs_df["MINUTES_NORM_240"]
+    )
+    logs_df["EXPECTED_OBPM_240"] = (
+        logs_df["PLAYER_OBPM_ROLLING_5"] * logs_df["MINUTES_NORM_240"]
+    )
+    logs_df["EXPECTED_DBPM_240"] = (
+        logs_df["PLAYER_DBPM_ROLLING_5"] * logs_df["MINUTES_NORM_240"]
+    )
+
     logs_df["EXPECTED_IMPACT"] = (
         logs_df["PLAYER_FORM_ROLLING_5"] * logs_df["FATIGUE_EWMA_MINUTES_5"]
     )
@@ -464,6 +520,11 @@ def build_active_roster_aggregations(logs_df: pd.DataFrame, embed_cols: list[str
         "ACTIVE_ROSTER_FORM_SUM": ("EXPECTED_IMPACT", "sum"),
         "ACTIVE_ROSTER_FORM_STD": ("EXPECTED_IMPACT", "std"),
         "ACTIVE_ROSTER_FORM_MAX": ("EXPECTED_IMPACT", "max"),
+
+        "ACTIVE_ROSTER_FORM_240_SUM": ("EXPECTED_IMPACT_240", "sum"),
+        "ACTIVE_ROSTER_FORM_240_MAX": ("EXPECTED_IMPACT_240", "max"),
+        "EXPECTED_OBPM_240_SUM": ("EXPECTED_OBPM_240", "sum"),
+        "EXPECTED_DBPM_240_SUM": ("EXPECTED_DBPM_240", "sum"),
 
         "ACTIVE_ROSTER_POS_FORM_SUM": ("POS_EXPECTED_IMPACT", "sum"),
         "ACTIVE_ROSTER_STAR_IMPACT": ("STAR_IMPACT", "sum"),
@@ -561,6 +622,19 @@ def build_active_roster_aggregations(logs_df: pd.DataFrame, embed_cols: list[str
         roster_agg["ACTIVE_ROSTER_EXPECTED_OBPM"] + roster_agg["ACTIVE_ROSTER_EXPECTED_DBPM"]
     )
 
+    # 240-minute reallocated BPM rates
+    roster_agg["ACTIVE_ROSTER_EXPECTED_OBPM_240"] = (
+        roster_agg["EXPECTED_OBPM_240_SUM"] / 240.0
+    ).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+    roster_agg["ACTIVE_ROSTER_EXPECTED_DBPM_240"] = (
+        roster_agg["EXPECTED_DBPM_240_SUM"] / 240.0
+    ).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+    roster_agg["ACTIVE_ROSTER_EXPECTED_NET_BPM_240"] = (
+        roster_agg["ACTIVE_ROSTER_EXPECTED_OBPM_240"] + roster_agg["ACTIVE_ROSTER_EXPECTED_DBPM_240"]
+    )
+
     # Playmaker Concentration Ratio
     roster_agg["PLAYMAKER_CONCENTRATION_RATIO"] = calculate_playmaker_concentration(
         roster_agg["ACTIVE_ROSTER_MAX_EXPECTED_AST"],
@@ -593,6 +667,28 @@ def add_team_lineup_identity_features(roster_agg: pd.DataFrame) -> pd.DataFrame:
         0.0,
     )
 
+    # Missing Player Deficit & 240-Minute Rotation Features
+    # 1. Expected minutes deficit: shortfall in active players' rolling minutes relative to 240 regulation minutes
+    roster_agg["ROSTER_MINUTES_DEFICIT"] = np.maximum(240.0 - roster_agg["TOTAL_EXPECTED_MINUTES"], 0.0)
+    roster_agg["MISSING_MINUTES_SHARE"] = (roster_agg["ROSTER_MINUTES_DEFICIT"] / 240.0).clip(lower=0.0, upper=1.0)
+    roster_agg["ROSTER_AVAILABILITY_PCT_240"] = (roster_agg["TOTAL_EXPECTED_MINUTES"] / 240.0).clip(lower=0.0, upper=1.5)
+
+    # 2. Team rolling baseline 240-minute roster talent (leak-free shift(1))
+    roster_agg["ROLLING_ROSTER_TALENT_240_10"] = (
+        team_groups["ACTIVE_ROSTER_FORM_240_SUM"]
+        .transform(lambda x: x.shift(1).ewm(span=10, min_periods=1).mean())
+        .fillna(HISTORICAL_ROSTER_FORM_240_PRIOR)
+    )
+
+    # 3. Missing Player Talent Deficit: drop in 240-minute reallocated quality below recent 10-game baseline
+    roster_agg["MISSING_PLAYER_TALENT_DEFICIT"] = np.maximum(
+        roster_agg["ROLLING_ROSTER_TALENT_240_10"] - roster_agg["ACTIVE_ROSTER_FORM_240_SUM"],
+        0.0,
+    )
+    roster_agg["MISSING_PLAYER_TALENT_SHARE"] = (
+        roster_agg["MISSING_PLAYER_TALENT_DEFICIT"] / roster_agg["ROLLING_ROSTER_TALENT_240_10"].replace(0, np.nan)
+    ).fillna(0.0).clip(lower=0.0, upper=1.0)
+
     # Rolling team concentration (structural identity: heliocentric vs balanced)
     roster_agg["ROLLING_STAR_SHARE_10"] = (
         team_groups["ACTIVE_ROSTER_STAR_SHARE"]
@@ -615,6 +711,8 @@ def add_team_lineup_identity_features(roster_agg: pd.DataFrame) -> pd.DataFrame:
             "EXPECTED_FOUR_FACTOR_FTR_SUM",
             "EXPECTED_OBPM_SUM",
             "EXPECTED_DBPM_SUM",
+            "EXPECTED_OBPM_240_SUM",
+            "EXPECTED_DBPM_240_SUM",
             "ACTIVE_ROSTER_SUM_EXPECTED_AST",
             "ACTIVE_ROSTER_MAX_EXPECTED_AST",
             "ACTIVE_ROSTER_POS_FORM_SUM",
@@ -732,6 +830,37 @@ def compute_roster_matchup_deltas(matchups_df: pd.DataFrame) -> pd.DataFrame:
     )
     matchups_df["DELTA_ACTIVE_ROSTER_EXPECTED_NET_BPM"] = (
         matchups_df["HOME_ACTIVE_ROSTER_EXPECTED_NET_BPM"] - matchups_df["AWAY_ACTIVE_ROSTER_EXPECTED_NET_BPM"]
+    )
+
+    # 240-minute rotation differentials
+    matchups_df["DELTA_ACTIVE_ROSTER_FORM_240_SUM"] = (
+        matchups_df["HOME_ACTIVE_ROSTER_FORM_240_SUM"] - matchups_df["AWAY_ACTIVE_ROSTER_FORM_240_SUM"]
+    )
+    matchups_df["DELTA_ACTIVE_ROSTER_FORM_240_MAX"] = (
+        matchups_df["HOME_ACTIVE_ROSTER_FORM_240_MAX"] - matchups_df["AWAY_ACTIVE_ROSTER_FORM_240_MAX"]
+    )
+    matchups_df["DELTA_ACTIVE_ROSTER_EXPECTED_OBPM_240"] = (
+        matchups_df["HOME_ACTIVE_ROSTER_EXPECTED_OBPM_240"] - matchups_df["AWAY_ACTIVE_ROSTER_EXPECTED_OBPM_240"]
+    )
+    matchups_df["DELTA_ACTIVE_ROSTER_EXPECTED_DBPM_240"] = (
+        matchups_df["HOME_ACTIVE_ROSTER_EXPECTED_DBPM_240"] - matchups_df["AWAY_ACTIVE_ROSTER_EXPECTED_DBPM_240"]
+    )
+    matchups_df["DELTA_ACTIVE_ROSTER_EXPECTED_NET_BPM_240"] = (
+        matchups_df["HOME_ACTIVE_ROSTER_EXPECTED_NET_BPM_240"] - matchups_df["AWAY_ACTIVE_ROSTER_EXPECTED_NET_BPM_240"]
+    )
+
+    # Missing player and availability features (directed so positive = home advantage)
+    matchups_df["DELTA_ROSTER_AVAILABILITY_240"] = (
+        matchups_df["HOME_ROSTER_AVAILABILITY_PCT_240"] - matchups_df["AWAY_ROSTER_AVAILABILITY_PCT_240"]
+    )
+    matchups_df["DELTA_MISSING_MINUTES_SHARE"] = (
+        matchups_df["AWAY_MISSING_MINUTES_SHARE"] - matchups_df["HOME_MISSING_MINUTES_SHARE"]
+    )
+    matchups_df["DELTA_MISSING_PLAYER_TALENT"] = (
+        matchups_df["AWAY_MISSING_PLAYER_TALENT_DEFICIT"] - matchups_df["HOME_MISSING_PLAYER_TALENT_DEFICIT"]
+    )
+    matchups_df["DELTA_MISSING_PLAYER_TALENT_SHARE"] = (
+        matchups_df["AWAY_MISSING_PLAYER_TALENT_SHARE"] - matchups_df["HOME_MISSING_PLAYER_TALENT_SHARE"]
     )
 
     matchups_df["DELTA_SPACING_GRAVITY_INDEX"] = (

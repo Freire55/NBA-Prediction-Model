@@ -12,15 +12,22 @@ import pytest
 
 from feature_engineering import (
     INITIAL_ELO,
+    ELO_EARLY_SEASON_BOOST,
+    ELO_EARLY_SEASON_HALF_LIFE,
+    DEFAULT_ROSTER_CONTINUITY_MIN,
+    DEFAULT_ROSTER_CONTINUITY_OFF,
+    DEFAULT_ROSTER_CONTINUITY_DEF,
     add_four_factors,
     add_rolling_features,
+    add_roster_continuity_features,
     add_schedule_features,
     build_matchups,
     calculate_altitude_advantage,
+    calculate_roster_continuity,
     load_altitude_map,
     simulate_elo,
 )
-from feature_engineering_players import (
+from feature_engineering.feature_engineering_players import (
     add_volatility_features,
     calculate_player_four_factors,
     calculate_spacing_gravity,
@@ -650,3 +657,207 @@ def test_tactical_clash_matrix_interactions():
 
     # Composite tactical clash advantage is strongly positive for Home
     assert result.loc[0, "DELTA_TACTICAL_CLASH_ADVANTAGE"] > 0.0
+
+
+def test_roster_continuity_calculation_and_bounds(tmp_path):
+    """
+    Verifies that roster continuity correctly tracks minutes, offensive, and defensive shares
+    across seasons and accounts for franchise relocations (e.g. SEA -> OKC).
+    """
+    # Create synthetic player logs for 2 seasons
+    logs = [
+        # Season 1: SEA has P1 (2000 min, 1000 pts) and P2 (1000 min, 200 pts)
+        {"SEASON_ID": 22007, "TEAM_ABBREVIATION": "SEA", "PLAYER_ID": "P1", "MIN": "40:00", "PTS": 1000, "AST": 300, "OREB": 50, "DREB": 300, "STL": 100, "BLK": 50, "TOV": 100, "PF": 80},
+        {"SEASON_ID": 22007, "TEAM_ABBREVIATION": "SEA", "PLAYER_ID": "P2", "MIN": "20:00", "PTS": 200, "AST": 50, "OREB": 100, "DREB": 200, "STL": 30, "BLK": 40, "TOV": 50, "PF": 100},
+        # Season 2: Franchise relocates to OKC. P1 returns, P2 leaves (replaced by P3)
+        {"SEASON_ID": 22008, "TEAM_ABBREVIATION": "OKC", "PLAYER_ID": "P1", "MIN": "38:00", "PTS": 1100, "AST": 350, "OREB": 60, "DREB": 320, "STL": 110, "BLK": 60, "TOV": 110, "PF": 85},
+        {"SEASON_ID": 22008, "TEAM_ABBREVIATION": "OKC", "PLAYER_ID": "P3", "MIN": "22:00", "PTS": 300, "AST": 80, "OREB": 80, "DREB": 180, "STL": 40, "BLK": 30, "TOV": 40, "PF": 90},
+    ]
+    log_file = tmp_path / "test_player_logs.csv"
+    cache_file = tmp_path / "test_continuity.csv"
+    pd.DataFrame(logs).to_csv(log_file, index=False)
+
+    df_cont = calculate_roster_continuity(player_logs_path=log_file, cache_path=cache_file)
+    assert len(df_cont) > 0
+
+    okc_cont = df_cont[(df_cont["SEASON_ID"] == 22008) & (df_cont["TEAM_ABBREVIATION"] == "OKC")]
+    assert len(okc_cont) == 1
+
+    # Minutes ratio: P1 played 40 mins out of 60 total = 40/60 = 0.6667
+    min_pct = okc_cont["ROSTER_CONTINUITY_MIN_PCT"].iloc[0]
+    assert 0.60 <= min_pct <= 0.70
+
+    # Bounds: all continuity percentages must be bounded in [0.0, 1.0]
+    assert (df_cont["ROSTER_CONTINUITY_MIN_PCT"] >= 0.0).all() and (df_cont["ROSTER_CONTINUITY_MIN_PCT"] <= 1.0).all()
+    assert (df_cont["ROSTER_CONTINUITY_OFF_PCT"] >= 0.0).all() and (df_cont["ROSTER_CONTINUITY_OFF_PCT"] <= 1.0).all()
+    assert (df_cont["ROSTER_CONTINUITY_DEF_PCT"] >= 0.0).all() and (df_cont["ROSTER_CONTINUITY_DEF_PCT"] <= 1.0).all()
+
+
+def test_simulate_elo_with_roster_continuity_regression():
+    """
+    Verifies that teams with high roster continuity retain more of their previous
+    Elo rating than teams with severe roster turnover.
+    """
+    df = pd.DataFrame([
+        # Season 1: BOS and LAL win games and achieve high Elo (~1600)
+        {"GAME_ID": "1", "GAME_DATE": "2023-01-01", "TEAM_ABBREVIATION": "BOS", "MATCHUP": "BOS vs. DET", "PTS": 125, "SEASON_ID": "22022", "ROSTER_CONTINUITY_MIN_PCT": 0.85},
+        {"GAME_ID": "1", "GAME_DATE": "2023-01-01", "TEAM_ABBREVIATION": "DET", "MATCHUP": "DET @ BOS", "PTS": 90, "SEASON_ID": "22022", "ROSTER_CONTINUITY_MIN_PCT": 0.70},
+        {"GAME_ID": "2", "GAME_DATE": "2023-01-02", "TEAM_ABBREVIATION": "LAL", "MATCHUP": "LAL vs. CHA", "PTS": 125, "SEASON_ID": "22022", "ROSTER_CONTINUITY_MIN_PCT": 0.85},
+        {"GAME_ID": "2", "GAME_DATE": "2023-01-02", "TEAM_ABBREVIATION": "CHA", "MATCHUP": "CHA @ LAL", "PTS": 90, "SEASON_ID": "22022", "ROSTER_CONTINUITY_MIN_PCT": 0.70},
+        # Season 2 starts: BOS retains 95% of roster, LAL retains only 20% of roster
+        {"GAME_ID": "3", "GAME_DATE": "2023-10-25", "TEAM_ABBREVIATION": "BOS", "MATCHUP": "BOS vs. NYK", "PTS": 110, "SEASON_ID": "22023", "ROSTER_CONTINUITY_MIN_PCT": 0.95},
+        {"GAME_ID": "3", "GAME_DATE": "2023-10-25", "TEAM_ABBREVIATION": "NYK", "MATCHUP": "NYK @ BOS", "PTS": 105, "SEASON_ID": "22023", "ROSTER_CONTINUITY_MIN_PCT": 0.70},
+        {"GAME_ID": "4", "GAME_DATE": "2023-10-25", "TEAM_ABBREVIATION": "LAL", "MATCHUP": "LAL vs. PHO", "PTS": 110, "SEASON_ID": "22023", "ROSTER_CONTINUITY_MIN_PCT": 0.20},
+        {"GAME_ID": "4", "GAME_DATE": "2023-10-25", "TEAM_ABBREVIATION": "PHO", "MATCHUP": "PHO @ LAL", "PTS": 105, "SEASON_ID": "22023", "ROSTER_CONTINUITY_MIN_PCT": 0.70},
+    ])
+    df["GAME_DATE"] = pd.to_datetime(df["GAME_DATE"])
+
+    result = simulate_elo(df)
+
+    bos_s2 = result.loc[(result["GAME_ID"] == "3") & (result["TEAM_ABBREVIATION"] == "BOS"), "PRE_GAME_ELO"].iloc[0]
+    lal_s2 = result.loc[(result["GAME_ID"] == "4") & (result["TEAM_ABBREVIATION"] == "LAL"), "PRE_GAME_ELO"].iloc[0]
+
+    # Both BOS and LAL won by 35 pts in Season 1, so their end of season 1 Elo was identical.
+    # In Season 2, BOS (high continuity) must preserve more rating than LAL (low continuity)
+    assert bos_s2 > lal_s2
+    assert bos_s2 > INITIAL_ELO
+    assert lal_s2 > INITIAL_ELO
+
+
+def test_early_season_10_game_convergence():
+    """
+    Verifies that the early season Elo dynamic K-factor and adaptive EWMA
+    complete their primary adaptation within ~10 games rather than 15-20 games.
+    """
+    # 1. Elo K-factor scaling:
+    # Game 0 should have elevated K (~35), and by Game 10 it should drop to <= 22
+    k_game_0 = 20.0 * (1.0 + ELO_EARLY_SEASON_BOOST * np.exp(-0.0 / ELO_EARLY_SEASON_HALF_LIFE))
+    k_game_10 = 20.0 * (1.0 + ELO_EARLY_SEASON_BOOST * np.exp(-10.0 / ELO_EARLY_SEASON_HALF_LIFE))
+    k_game_15 = 20.0 * (1.0 + ELO_EARLY_SEASON_BOOST * np.exp(-15.0 / ELO_EARLY_SEASON_HALF_LIFE))
+
+    assert k_game_0 >= 34.0  # Aggressive early season discovery
+    assert k_game_10 <= 22.0  # Decays to near-standard K by game 10
+    assert np.isclose(k_game_15, 20.0, atol=1.0)  # Effectively at baseline by game 15
+
+    # 2. Adaptive EWMA: verify that level shift in new season is absorbed in 10 games
+    s = pd.Series([90.0] * 20 + [120.0] * 15)  # Team scored 90 last season, scores 120 this season
+    sg = pd.Series(list(range(20)) + list(range(15)))  # Season game counter resets to 0 at index 20
+    from feature_engineering import ewma
+    res = ewma(s, span=10, season_games=sg)
+
+    # In Game 0 of new season (index 20), rating is shifted from last season
+    # By Game 10 of new season (index 30), rating should be >= 116 (absorbing >85% of the 30-point leap)
+    assert res.iloc[30] >= 116.0
+
+
+def test_240_minute_rotation_reallocation():
+    """
+    Verifies that the closed 240-minute rotation reallocation scales player minutes
+    so that active roster projected playing time sums to exactly 240.0 regulation minutes,
+    absorbing starter absences into bench player projections.
+    """
+    from feature_engineering.feature_engineering_players import compute_player_expected_impacts
+
+    # Construct mock player appearance dataset for 1 team in 1 game
+    # 5 starters (30 min EWMA each) + 4 bench (15 min EWMA each) = 210 total expected mins
+    players = [f"P_{i}" for i in range(9)]
+    ewma_mins = [30.0] * 5 + [15.0] * 4
+    form_scores = [15.0] * 5 + [5.0] * 4
+
+    logs_df = pd.DataFrame({
+        "GAME_ID": ["G1"] * 9,
+        "TEAM_ID": ["T1"] * 9,
+        "PLAYER_ID": players,
+        "GAME_DATE": pd.to_datetime(["2024-01-01"] * 9),
+        "PLAYER_FORM_ROLLING_5": form_scores,
+        "PLAYER_FORM_ROLLING_10": form_scores,
+        "PLAYER_OBPM_ROLLING_5": [2.0] * 9,
+        "PLAYER_DBPM_ROLLING_5": [1.0] * 9,
+        "PLAYER_OBPM_ROLLING_10": [2.0] * 9,
+        "PLAYER_DBPM_ROLLING_10": [1.0] * 9,
+        "PLAYER_FOUR_FACTOR_EFG_ROLLING_5": [0.55] * 9,
+        "PLAYER_FOUR_FACTOR_TOV_ROLLING_5": [0.12] * 9,
+        "PLAYER_FOUR_FACTOR_OREB_ROLLING_5": [0.03] * 9,
+        "PLAYER_FOUR_FACTOR_FTR_ROLLING_5": [0.25] * 9,
+        "PLAYER_FOUR_FACTOR_EFG_ROLLING_10": [0.55] * 9,
+        "PLAYER_FOUR_FACTOR_TOV_ROLLING_10": [0.12] * 9,
+        "PLAYER_FOUR_FACTOR_OREB_ROLLING_10": [0.03] * 9,
+        "PLAYER_FOUR_FACTOR_FTR_ROLLING_10": [0.25] * 9,
+        "PLAYER_FG3A_ROLLING_5": [5.0] * 9,
+        "PLAYER_FG3M_ROLLING_5": [2.0] * 9,
+        "PLAYER_AST_ROLLING_5": [3.0] * 9,
+        "PLAYER_SPACING_GRAVITY": [4.0] * 9,
+        "EXPECTED_AST": [2.5] * 9,
+        "EXPECTED_OBPM": [50.0] * 9,
+        "EXPECTED_DBPM": [25.0] * 9,
+        "FATIGUE_EWMA_MINUTES_5": ewma_mins,
+        "FATIGUE_EWMA_MINUTES_10": ewma_mins,
+        "FATIGUE_SURGE": [0.0] * 9,
+        "ROBUST_EXPECTED_IMPACT": form_scores,
+    })
+
+    embeddings_df = pd.DataFrame({
+        "PLAYER_ID": players,
+        "GAME_DATE": pd.to_datetime(["2024-01-01"] * 9),
+        "EMBED_1": [0.1] * 9,
+    })
+
+    result_df, _ = compute_player_expected_impacts(logs_df, embeddings_df)
+
+    # 1. Total reallocated minutes must equal exactly 240.0
+    total_norm_mins = result_df["MINUTES_NORM_240"].sum()
+    assert np.isclose(total_norm_mins, 240.0)
+
+    # 2. Proportion preservation: starter minutes scaled up by 240 / 210
+    expected_starter_mins = 30.0 * (240.0 / 210.0)
+    assert np.isclose(result_df.loc[result_df["PLAYER_ID"] == "P_0", "MINUTES_NORM_240"].iloc[0], expected_starter_mins)
+
+    # 3. Expected impact reallocated
+    expected_starter_impact_240 = 15.0 * expected_starter_mins
+    assert np.isclose(result_df.loc[result_df["PLAYER_ID"] == "P_0", "EXPECTED_IMPACT_240"].iloc[0], expected_starter_impact_240)
+
+
+def test_missing_player_deficit_and_availability():
+    """
+    Verifies that missing player minutes deficit, availability share, and talent
+    drop features detect star absences with leak-free chronological lag.
+    """
+    from feature_engineering.feature_engineering_players import add_team_lineup_identity_features
+
+    # 3 consecutive games for team T1:
+    # Game 1 & 2: Full squad available (240 expected mins, 2400 form 240 sum)
+    # Game 3: Key player sits out (only 200 expected mins, 2100 form 240 sum)
+    roster_agg = pd.DataFrame({
+        "GAME_ID": ["G1", "G2", "G3"],
+        "TEAM_ID": ["T1", "T1", "T1"],
+        "GAME_DATE": pd.to_datetime(["2024-01-01", "2024-01-03", "2024-01-05"]),
+        "TOTAL_EXPECTED_MINUTES": [240.0, 240.0, 200.0],
+        "ACTIVE_ROSTER_FORM_SUM": [2400.0, 2400.0, 1950.0],
+        "ACTIVE_ROSTER_FORM_240_SUM": [2400.0, 2400.0, 2100.0],
+        "ACTIVE_ROSTER_FORM_STD": [5.0, 5.0, 5.0],
+        "ACTIVE_ROSTER_FORM_MAX": [25.0, 25.0, 20.0],
+        "ACTIVE_ROSTER_STAR_SHARE": [0.25, 0.25, 0.22],
+        "ACTIVE_ROSTER_TOP_2_SHARE": [0.45, 0.45, 0.40],
+        "ACTIVE_ROSTER_TOP_3_SHARE": [0.60, 0.60, 0.55],
+        "ACTIVE_ROSTER_BENCH_SHARE": [0.40, 0.40, 0.45],
+        "ACTIVE_ROSTER_POS_FORM_SUM": [2400.0, 2400.0, 2100.0],
+        "ACTIVE_ROSTER_STAR_IMPACT": [600.0, 600.0, 460.0],
+        "ACTIVE_ROSTER_TOP_2_IMPACT": [1080.0, 1080.0, 840.0],
+        "ACTIVE_ROSTER_TOP_3_IMPACT": [1440.0, 1440.0, 1150.0],
+    })
+
+    result = add_team_lineup_identity_features(roster_agg)
+
+    # Game 3 deficit checks:
+    # 1. 240 - 200 = 40 minutes deficit
+    assert np.isclose(result.loc[result["GAME_ID"] == "G3", "ROSTER_MINUTES_DEFICIT"].iloc[0], 40.0)
+    # 2. Missing minutes share = 40 / 240 = 1/6
+    assert np.isclose(result.loc[result["GAME_ID"] == "G3", "MISSING_MINUTES_SHARE"].iloc[0], 40.0 / 240.0)
+    # 3. Availability pct = 200 / 240 = 5/6
+    assert np.isclose(result.loc[result["GAME_ID"] == "G3", "ROSTER_AVAILABILITY_PCT_240"].iloc[0], 200.0 / 240.0)
+    # 4. In Game 3, baseline talent is 2400 (from games 1 & 2 shifted by 1), actual is 2100 -> deficit is 300.0
+    talent_deficit = result.loc[result["GAME_ID"] == "G3", "MISSING_PLAYER_TALENT_DEFICIT"].iloc[0]
+    assert np.isclose(talent_deficit, 300.0)
+    # 5. Game 1 and Game 2 had full rosters -> deficit is 0.0
+    assert result.loc[result["GAME_ID"] == "G1", "ROSTER_MINUTES_DEFICIT"].iloc[0] == 0.0
+    assert result.loc[result["GAME_ID"] == "G2", "ROSTER_MINUTES_DEFICIT"].iloc[0] == 0.0

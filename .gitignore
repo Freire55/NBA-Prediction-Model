@@ -21,6 +21,7 @@ models/**/*.pkl
 models/**/*_cv_results.csv
 models/run_*
 models/**/model.joblib
+models/*.json
 optimization_checkpoints/
 catboost_info/
 
@@ -40,7 +41,8 @@ htmlcov/
 *.swp
 *.swo
 
-# Temporary notes
+# Temporary notes & internal experiment reports
+docs/
 fixes.txt
 a_explanation.md
 model_improvements.md
@@ -48,3 +50,8 @@ model_roadmap_to_70.md
 pca_improve.md
 COMPREHENSIVE_MODEL_IMPROVEMENTS_AND_ROADMAP.md
 feature_engineering_players_star_lineup_backup.py
+EXPERIMENTS_REPORT.md
+EXPERIMENT_RESULTS_AND_PRUNING.md
+models/*_results.json
+models/ablation_results.json
+models/pruning_audit_results.json

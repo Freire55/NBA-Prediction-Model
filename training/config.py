@@ -64,7 +64,6 @@ class DatasetSummary:
     validation_games: int
     test_games: int
     
-    lr_feature_names: list[str]
     xgb_feature_names: list[str]
     mlp_feature_names: list[str]
     margin_feature_names: list[str] = field(default_factory=list)
@@ -115,7 +114,6 @@ class TrainingData:
 
     mlp: FeatureSet
     xgb: FeatureSet
-    lr: FeatureSet
 
     y_train: pd.Series
     y_val: pd.Series
@@ -172,10 +170,6 @@ class TrainingConfig:
     # ======================================================
 
 
-    lr_prefixes: list[str] = field(
-        default_factory=lambda: ["DELTA_"]
-    )
-    
     xgb_prefixes: list[str] = field(
         default_factory=lambda: ["HOME_", "AWAY_", "EMBED_"]
     )
@@ -219,12 +213,8 @@ class TrainingConfig:
             "xgb": [
                 "EMBED_DELTA_1_MAX",
             ],
-            "lr": [
-                "DELTA_Z_FG3A_EWMA_5",
-                "DELTA_SOS_ROLLING_8",
-                "DELTA_ACTIVE_ROSTER_EXPECTED_FTR",
-                "HOME_B2B",
-            ],
+            "catboost": [],
+            "margin": [],
         }
     )
 
@@ -466,16 +456,6 @@ class TrainingConfig:
                 "DELTA_ACTIVE_ROSTER_TOP_3_SHARE",
                 "DELTA_ROAD_TRIP_LENGTH",
             ],
-            "lr": [
-                "DELTA_ROLLING_PACE",
-                "DELTA_D_3PT_ACTUAL",
-                "DELTA_FATIGUE_IMPORTANCE_5_STD",
-                "DELTA_FATIGUE_IMPORTANCE_5_SUM",
-                "DELTA_FATIGUE_IMPORTANCE_5_MAX",
-                "DELTA_FOUR_FACTORS_NET_EFG",
-                "DELTA_ACTIVE_ROSTER_TOP_3_SHARE",
-                "DELTA_ROAD_TRIP_LENGTH",
-            ],
         }
     )
 
@@ -491,7 +471,6 @@ class TrainingConfig:
     # Speed & Architecture Optimizations
     # ======================================================
 
-    include_logistic_regression: bool = False
     ensemble_shrinkage: float = 0.05
     use_halving_search: bool = True
     halving_factor: int = 2
@@ -512,7 +491,6 @@ class TrainingConfig:
 
     mlp_search_iterations: int = 30
     xgb_search_iterations: int = 20
-    lr_search_iterations: int = 12
     margin_search_iterations: int = 15
 
     # ======================================================
@@ -543,13 +521,6 @@ class TrainingConfig:
             "subsample": [0.7, 0.85, 1.0],
             "colsample_bytree": [0.7, 0.85, 1.0],
             "n_estimators": [100, 300, 500],
-        }
-    )
-
-    lr_grid: dict[str, Any] = field(
-        default_factory=lambda: {
-            "C": [0.001, 0.01, 0.1, 1.0, 10.0, 100.0],
-            "solver": ["lbfgs", "liblinear"],
         }
     )
 
@@ -599,7 +570,7 @@ class TrainingConfig:
             self.features_to_remove["catboost"] = list(self.features_to_remove.get("xgb", []))
 
         if self.prune_optimized_features:
-            for m in ["mlp", "xgb", "lr", "catboost", "margin"]:
+            for m in ["mlp", "xgb", "catboost", "margin"]:
                 existing = set(self.features_to_remove.get(m, []))
                 for feat in self.optimized_features_to_remove.get(m, []):
                     if feat not in existing:
@@ -644,7 +615,6 @@ class TrainingArtifacts:
 
     data: TrainingData | None = None
 
-    lr: ModelArtifacts = field(default_factory=ModelArtifacts)
     xgb: ModelArtifacts = field(default_factory=ModelArtifacts)
     mlp: ModelArtifacts = field(default_factory=ModelArtifacts)
     catboost: ModelArtifacts = field(default_factory=ModelArtifacts)

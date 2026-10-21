@@ -95,7 +95,6 @@ def mock_training_data(synthetic_margin_data):
         train_games=len(X_train_df),
         validation_games=len(X_val_df),
         test_games=len(X_val_df),
-        lr_feature_names=list(X_train_df.columns),
         xgb_feature_names=list(X_train_df.columns),
         mlp_feature_names=list(X_train_df.columns),
         margin_feature_names=list(X_train_df.columns),
@@ -104,7 +103,6 @@ def mock_training_data(synthetic_margin_data):
     return TrainingData(
         mlp=dummy_fs,
         xgb=dummy_fs,
-        lr=dummy_fs,
         margin=margin_fs,
         y_train=pd.Series(np.where(y_train > 0, 1, 0)),
         y_val=pd.Series(np.where(y_val > 0, 1, 0)),

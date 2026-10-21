@@ -2,7 +2,7 @@
 Learns optimal convex ensemble weights across NBA prediction models.
 
 This module combines validation-set probability distributions from calibrated
-models (MLP, XGBoost, Logistic Regression, and optionally Pace-Modulated Margin)
+models (MLP, XGBoost, CatBoost, and optionally Pace-Modulated Margin)
 by minimizing logarithmic loss on the probability simplex:
 
     minimize_{w} - 1/N sum_{i=1}^N [ y_i ln(p_i(w)) + (1 - y_i) ln(1 - p_i(w)) ]
@@ -37,7 +37,6 @@ LOG_LOSS_EPSILON = 1e-15
 def _extract_validation_probabilities(
     mlp: ModelArtifacts,
     xgb: ModelArtifacts,
-    lr: ModelArtifacts,
     catboost: Optional[ModelArtifacts] = None,
     margin: Optional[ModelArtifacts] = None,
 ) -> Tuple[np.ndarray, List[str]]:
@@ -57,11 +56,6 @@ def _extract_validation_probabilities(
         cb_probs = catboost.model.predict_proba(catboost.feature_set.X_val)[:, 1]
         columns.append(cb_probs)
         names.append("CatBoost")
-
-    if lr is not None and lr.model is not None and lr.feature_set is not None and lr.feature_set.X_val_processed is not None:
-        lr_probs = lr.model.predict_proba(lr.feature_set.X_val_processed)[:, 1]
-        columns.append(lr_probs)
-        names.append("Logistic Regression")
 
     if margin is not None and margin.model is not None:
         reg_type = getattr(getattr(margin.model, "regressor", margin.model), "model_type", "ridge")
@@ -152,7 +146,6 @@ def _optimize_weights_slsqp(
 def learn_ensemble_weights(
     mlp: ModelArtifacts,
     xgb: ModelArtifacts,
-    lr: Optional[ModelArtifacts] = None,
     y_val: pd.Series = None,
     catboost: Optional[ModelArtifacts] = None,
     margin: Optional[ModelArtifacts] = None,
@@ -164,7 +157,6 @@ def learn_ensemble_weights(
     Args:
         mlp: Trained MLP model artifact.
         xgb: Trained XGBoost model artifact.
-        lr: Trained Logistic Regression model artifact.
         y_val: Ground truth validation labels.
         catboost: Optional trained CatBoost model artifact.
         margin: Optional trained Pace-Modulated Margin model artifact.
@@ -178,7 +170,7 @@ def learn_ensemble_weights(
     logger.info("      Optimizing ensemble weights via constrained log-loss minimization (SLSQP)...")
 
     predictions_matrix, model_names = _extract_validation_probabilities(
-        mlp=mlp, xgb=xgb, lr=lr, catboost=catboost, margin=margin
+        mlp=mlp, xgb=xgb, catboost=catboost, margin=margin
     )
     weights = _optimize_weights_slsqp(predictions_matrix, y_val, shrinkage_lambda=shrinkage_lambda)
 

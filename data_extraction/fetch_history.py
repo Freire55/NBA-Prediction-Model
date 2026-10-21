@@ -1,7 +1,7 @@
 """
-Fetches historical NBA regular season player game logs from the NBA Stats API.
+Fetches historical NBA regular season team game logs from the NBA Stats API.
 
-Saves the combined multi-season player logs to data/raw_player_game_logs.csv.
+Saves the combined multi-season game logs to data/raw_historical_nba.csv.
 """
 
 from datetime import datetime
@@ -11,7 +11,7 @@ import time
 import pandas as pd
 from nba_api.stats.endpoints import leaguegamelog
 
-DATA_DIR = Path(__file__).resolve().parent / "data"
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 START_YEAR = 2000
 MAX_RETRIES = 3
 REQUEST_DELAY = 2.0
@@ -34,20 +34,20 @@ def get_historical_seasons(start_year: int = START_YEAR) -> list[str]:
     return seasons
 
 
-def fetch_player_season_logs(
+def fetch_season_game_log(
     season: str,
     max_retries: int = MAX_RETRIES,
     request_delay: float = REQUEST_DELAY,
     retry_delay: float = RETRY_DELAY,
 ) -> pd.DataFrame:
-    """Fetches individual player game logs for a single season with retry backoff."""
-    logger.info(f"Fetching player logs for {season}...")
+    """Fetches team regular season game logs for a single season with retry backoff."""
+    logger.info(f"Fetching {season}...")
     for attempt in range(max_retries):
         try:
             game_log = leaguegamelog.LeagueGameLog(
                 season=season,
                 season_type_all_star="Regular Season",
-                player_or_team_abbreviation="P",
+                player_or_team_abbreviation="T",
             )
             df = game_log.get_data_frames()[0]
             time.sleep(request_delay)
@@ -55,33 +55,33 @@ def fetch_player_season_logs(
         except Exception as err:
             logger.warning(f"Attempt {attempt + 1} failed for {season}: {err}")
             time.sleep(retry_delay)
-    raise ConnectionError(f"Failed to fetch player logs for {season} after {max_retries} attempts.")
+    raise ConnectionError(f"Failed to fetch {season} after {max_retries} attempts.")
 
 
-def fetch_all_player_game_logs(seasons: list[str]) -> pd.DataFrame:
-    """Iterates through seasons and concatenates all fetched player game logs."""
-    all_logs = []
+def fetch_all_historical_seasons(seasons: list[str]) -> pd.DataFrame:
+    """Iterates through seasons and concatenates all fetched team game logs."""
+    all_games = []
     for season in seasons:
-        df = fetch_player_season_logs(season)
-        all_logs.append(df)
+        df = fetch_season_game_log(season)
+        all_games.append(df)
 
-    if not all_logs:
-        raise ValueError("No player game logs were fetched.")
-    return pd.concat(all_logs, ignore_index=True)
+    if not all_games:
+        raise ValueError("No game logs were fetched.")
+    return pd.concat(all_games, ignore_index=True)
 
 
-def save_player_game_logs(df: pd.DataFrame, output_path: Path) -> None:
-    """Saves raw individual player game logs to CSV."""
+def save_historical_data(df: pd.DataFrame, output_path: Path) -> None:
+    """Saves raw historical team box scores to CSV."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_path, index=False)
-    logger.info(f"Success! Saved {len(df):,} individual player performances to '{output_path.name}'.")
+    logger.info(f"Success! Saved {len(df):,} total games to '{output_path.name}'.")
 
 
 def main() -> None:
-    """Orchestrates historical NBA player game log retrieval."""
+    """Orchestrates historical NBA game log retrieval."""
     seasons = get_historical_seasons()
-    master_logs_df = fetch_all_player_game_logs(seasons)
-    save_player_game_logs(master_logs_df, DATA_DIR / "raw_player_game_logs.csv")
+    master_df = fetch_all_historical_seasons(seasons)
+    save_historical_data(master_df, DATA_DIR / "raw_historical_nba.csv")
 
 
 if __name__ == "__main__":

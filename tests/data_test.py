@@ -62,7 +62,6 @@ def test_chronological_split(mock_read_csv, mock_matchups_data):
         # Verify heterogeneous feature routing works
         assert isinstance(training_data.mlp.X_train, pd.DataFrame)
         assert isinstance(training_data.xgb.X_train, pd.DataFrame)
-        assert isinstance(training_data.lr.X_train, pd.DataFrame)
 
 
 def test_exponential_recency_weights_properties():

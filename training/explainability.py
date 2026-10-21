@@ -5,13 +5,11 @@ This module extracts architecture-specific feature importances and global SHAP
 values to explain the predictive drivers behind model forecasts:
 - MLP: Permutation feature importance across chronological validation games
 - XGBoost: MDI (Mean Decrease in Impurity) tree importance and SHAP TreeExplainer
-- Logistic Regression: L2-regularized standardized regression coefficients
 - Margin Regressor: Point differential regression weights (Ridge/XGB)
 
 Outputs:
     05_xgb_feature_importance.png
     06_mlp_feature_importance.png
-    07_lr_coefficients.png
     08_xgb_shap_summary.png
     09_margin_coefficients.png (if margin model present)
     combined_feature_rankings.csv
@@ -37,7 +35,6 @@ from training.utils import save_plot, unwrap_base_estimator
 
 XGB_IMPORTANCE_PLOT = "05_xgb_feature_importance.png"
 MLP_IMPORTANCE_PLOT = "06_mlp_feature_importance.png"
-LR_COEFFICIENTS_PLOT = "07_lr_coefficients.png"
 SHAP_PLOT = "08_xgb_shap_summary.png"
 MARGIN_IMPORTANCE_PLOT = "09_margin_coefficients.png"
 CATBOOST_IMPORTANCE_PLOT = "11_catboost_feature_importance.png"
@@ -125,35 +122,6 @@ def generate_xgb_importance(
     )
 
     return importance_df
-
-
-def generate_lr_coefficients(
-    artifacts: TrainingArtifacts,
-) -> pd.DataFrame:
-    """Ranks Logistic Regression coefficients by absolute magnitude."""
-    logger.info("      Extracting Logistic Regression Coefficients...")
-
-    lr_raw = unwrap_base_estimator(artifacts.lr.final_model)
-
-    coefficients_df = pd.DataFrame(
-        {
-            "Feature": artifacts.lr.feature_set.feature_names,
-            "Weight": lr_raw.coef_[0],
-        }
-    )
-    coefficients_df["Abs_Weight"] = coefficients_df["Weight"].abs()
-    coefficients_df = coefficients_df.sort_values("Abs_Weight", ascending=False)
-
-    plot_horizontal_bar(
-        coefficients_df,
-        "Logistic Regression Coefficients (Absolute Top 15)",
-        LR_COEFFICIENTS_PLOT,
-        sort_col="Abs_Weight",
-        xlabel="Absolute Coefficient",
-        output_dir=artifacts.output_dir,
-    )
-
-    return coefficients_df
 
 
 def generate_margin_importance(
@@ -290,11 +258,6 @@ def generate_explanations(
     mlp_importance = generate_mlp_importance(artifacts)
     xgb_importance = generate_xgb_importance(artifacts)
     catboost_importance = generate_catboost_importance(artifacts)
-    lr_coefficients = (
-        generate_lr_coefficients(artifacts)
-        if artifacts.lr.final_model is not None and artifacts.lr.feature_set is not None
-        else None
-    )
     margin_importance = generate_margin_importance(artifacts)
 
     combined = (
@@ -310,15 +273,6 @@ def generate_explanations(
     if catboost_importance is not None:
         combined = combined.merge(
             catboost_importance[["Feature", "Importance"]].rename(columns={"Importance": "CatBoost"}),
-            on="Feature",
-            how="outer",
-        )
-
-    if lr_coefficients is not None:
-        combined = combined.merge(
-            lr_coefficients[["Feature", "Abs_Weight"]].rename(
-                columns={"Abs_Weight": "Logistic_Regression"}
-            ),
             on="Feature",
             how="outer",
         )

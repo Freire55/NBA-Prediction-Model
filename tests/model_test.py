@@ -5,14 +5,12 @@ Validates:
 1. CatBoost classifier hyperparameter tuning and oblivious tree importance.
 2. XGBoost classifier hyperparameter tuning and histogram splitting.
 3. Multi-Layer Perceptron (MLP) adaptive learning rate tuning.
-4. Logistic Regression regularization grid search.
-5. Model unwrapping utility across calibrated and raw estimator wrappers.
+4. Model unwrapping utility across calibrated and raw estimator wrappers.
 """
 
 import numpy as np
 import pandas as pd
 import pytest
-from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.neural_network import MLPClassifier
 from xgboost import XGBClassifier
@@ -20,7 +18,6 @@ from xgboost import XGBClassifier
 from training.config import TrainingConfig
 from training.tuning import (
     tune_catboost,
-    tune_logistic_regression,
     tune_mlp,
     tune_xgboost,
 )
@@ -93,22 +90,7 @@ def test_mlp_tuning_pipeline():
     assert hasattr(search.best_estimator_, "predict_proba")
 
 
-def test_logistic_regression_tuning_pipeline():
-    """Verifies LogisticRegression grid search over C regularization parameter."""
-    np.random.seed(42)
-    X = np.random.randn(80, 3)
-    y = pd.Series((X[:, 0] > 0).astype(int))
-
-    config = TrainingConfig()
-    config.lr_grid = {"C": [0.1, 1.0]}
-    tscv = TimeSeriesSplit(n_splits=2)
-
-    search = tune_logistic_regression(X, y, config, tscv)
-    assert search.best_estimator_ is not None
-    assert hasattr(search.best_estimator_, "coef_")
-
-
 def test_unwrap_base_estimator():
     """Ensures unwrap_base_estimator extracts the core model from wrappers."""
-    raw_lr = LogisticRegression()
-    assert unwrap_base_estimator(raw_lr) is raw_lr
+    raw_mlp = MLPClassifier()
+    assert unwrap_base_estimator(raw_mlp) is raw_mlp

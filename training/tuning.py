@@ -21,7 +21,6 @@ import pandas as pd
 from catboost import CatBoostClassifier
 from sklearn.base import clone
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import (
     GridSearchCV,
     RandomizedSearchCV,
@@ -43,12 +42,10 @@ logger = logging.getLogger(__name__)
 MLP_PARAMS_FILE = "mlp_best_params.json"
 XGB_PARAMS_FILE = "xgb_best_params.json"
 CATBOOST_PARAMS_FILE = "catboost_best_params.json"
-LR_PARAMS_FILE = "lr_best_params.json"
 
 MLP_RESULTS_FILE = "mlp_cv_results.csv"
 XGB_RESULTS_FILE = "xgb_cv_results.csv"
 CATBOOST_RESULTS_FILE = "catboost_cv_results.csv"
-LR_RESULTS_FILE = "lr_cv_results.csv"
 CALIBRATION_REPORT_FILE = "calibration_model_selection.json"
 
 
@@ -287,32 +284,6 @@ def tune_catboost(
     return search
 
 
-def tune_logistic_regression(
-    X_train: Any,
-    y_train: Any,
-    config: TrainingConfig,
-    tscv: TimeSeriesSplit,
-) -> GridSearchCV:
-    """
-    Exhaustively searches regularization penalty strengths (C) for Logistic Regression.
-    """
-    search = GridSearchCV(
-        estimator=LogisticRegression(
-            max_iter=1000,
-            random_state=config.random_seed,
-        ),
-        param_grid=config.lr_grid,
-        cv=tscv,
-        scoring="neg_log_loss",
-        n_jobs=-1,
-    )
-    search.fit(X_train, y_train)
-    logger.info("      Best Logistic Regression CV Log Loss: %.4f", -search.best_score_)
-    return search
-
-
-
-
 # ======================================================
 # Probability Calibration
 # ======================================================
@@ -321,15 +292,14 @@ def calibrate_best_models(
     mlp_estimator: Any,
     xgb_estimator: Any,
     catboost_estimator: Any,
-    lr_estimator: Optional[Any],
     data: TrainingData,
     tscv: TimeSeriesSplit,
     config: Optional[TrainingConfig] = None,
     sample_weight: Optional[np.ndarray] = None,
-) -> Tuple[Any, Any, Any, Any, Dict[str, Any]]:
+) -> Tuple[Any, Any, Any, Dict[str, Any]]:
     """
-    Fits cross-validated probability calibration across available base models.
-    Performs model selection between Platt Scaling and Beta Calibration for each model.
+    Fits cross-validated probability calibration across base classifiers.
+    Performs model selection between Platt Scaling, Beta Calibration, and Spline Calibration.
     Applies selective recency weighting: MLP receives sample weights, while tree models remain unweighted.
     """
     sw = sample_weight if sample_weight is not None else (
@@ -353,23 +323,13 @@ def calibrate_best_models(
         catboost_estimator, data.catboost.X_train, data.y_train, tscv, sample_weight=None
     )
 
-    lr_cal = None
-    lr_meta = {"method": "none", "selected_log_loss": None}
-    if lr_estimator is not None and getattr(config, "include_logistic_regression", False):
-        logger.info("      [Calibration] Evaluating Platt vs Beta vs Spline calibration for Logistic Regression...")
-        lr_cal, lr_meta = calibrate_estimator_with_model_selection(
-            lr_estimator, data.lr.X_train_processed, data.y_train, tscv, sample_weight=None
-        )
-
     calibration_report = {
         "MLP": mlp_meta,
         "XGBoost": xgb_meta,
         "CatBoost": cb_meta,
     }
-    if lr_cal is not None:
-        calibration_report["Logistic_Regression"] = lr_meta
 
-    return mlp_cal, xgb_cal, cb_cal, lr_cal, calibration_report
+    return mlp_cal, xgb_cal, cb_cal, calibration_report
 
 
 # ======================================================
@@ -380,7 +340,6 @@ def save_tuning_results(
     mlp_search: Any,
     xgb_search: Any,
     catboost_search: Any,
-    lr_search: Optional[Any],
     calibration_report: Dict[str, Any],
     output_dir: Path,
 ) -> None:
@@ -388,30 +347,25 @@ def save_tuning_results(
     save_json(mlp_search.best_params_, output_dir / MLP_PARAMS_FILE)
     save_json(xgb_search.best_params_, output_dir / XGB_PARAMS_FILE)
     save_json(catboost_search.best_params_, output_dir / CATBOOST_PARAMS_FILE)
-    if lr_search is not None:
-        save_json(lr_search.best_params_, output_dir / LR_PARAMS_FILE)
     save_json(calibration_report, output_dir / CALIBRATION_REPORT_FILE)
 
     pd.DataFrame(mlp_search.cv_results_).to_csv(output_dir / MLP_RESULTS_FILE, index=False)
     pd.DataFrame(xgb_search.cv_results_).to_csv(output_dir / XGB_RESULTS_FILE, index=False)
     pd.DataFrame(catboost_search.cv_results_).to_csv(output_dir / CATBOOST_RESULTS_FILE, index=False)
-    if lr_search is not None:
-        pd.DataFrame(lr_search.cv_results_).to_csv(output_dir / LR_RESULTS_FILE, index=False)
 
 
 def tune_base_models(
     data: TrainingData,
     config: TrainingConfig,
     output_dir: Path,
-) -> Tuple[ModelArtifacts, ModelArtifacts, ModelArtifacts, ModelArtifacts]:
+) -> Tuple[ModelArtifacts, ModelArtifacts, ModelArtifacts]:
     """
-    Orchestrates hyperparameter tuning and calibration across base classifiers.
+    Orchestrates hyperparameter tuning and calibration across base classifiers (MLP, XGBoost, CatBoost).
     Applies architecture-selective recency weighting exclusively to MLP while
-    keeping decision trees and linear models unweighted.
-    If include_logistic_regression is False, skips LR to accelerate training.
+    keeping decision trees unweighted.
 
     Returns:
-        Tuple of (mlp_artifacts, xgb_artifacts, catboost_artifacts, lr_artifacts)
+        Tuple of (mlp_artifacts, xgb_artifacts, catboost_artifacts)
         containing tuned and calibrated models.
     """
     tscv = TimeSeriesSplit(n_splits=config.cv_folds)
@@ -425,29 +379,21 @@ def tune_base_models(
     xgb_search = tune_xgboost(data.xgb.X_train, data.y_train, config, tscv, sample_weight=None)
     catboost_search = tune_catboost(data.catboost.X_train, data.y_train, config, tscv, sample_weight=None)
 
-    lr_search = None
-    if getattr(config, "include_logistic_regression", False):
-        lr_search = tune_logistic_regression(data.lr.X_train_processed, data.y_train, config, tscv)
-    else:
-        logger.info("      [Pruning] Binary Logistic Regression is disabled (0.00% ensemble contribution).")
-
     logger.info("      Applying leak-free calibration model selection (Platt vs. Beta vs. Spline)...")
-    mlp_cal, xgb_cal, cb_cal, lr_cal, cal_report = calibrate_best_models(
+    mlp_cal, xgb_cal, cb_cal, cal_report = calibrate_best_models(
         mlp_estimator=mlp_search.best_estimator_,
         xgb_estimator=xgb_search.best_estimator_,
         catboost_estimator=catboost_search.best_estimator_,
-        lr_estimator=lr_search.best_estimator_ if lr_search is not None else None,
         data=data,
         tscv=tscv,
         config=config,
         sample_weight=sw,
     )
 
-    save_tuning_results(mlp_search, xgb_search, catboost_search, lr_search, cal_report, output_dir)
+    save_tuning_results(mlp_search, xgb_search, catboost_search, cal_report, output_dir)
 
     mlp_artifacts = ModelArtifacts(feature_set=data.mlp, model=mlp_cal)
     xgb_artifacts = ModelArtifacts(feature_set=data.xgb, model=xgb_cal)
     catboost_artifacts = ModelArtifacts(feature_set=data.catboost, model=cb_cal)
-    lr_artifacts = ModelArtifacts(feature_set=data.lr, model=lr_cal)
 
-    return mlp_artifacts, xgb_artifacts, catboost_artifacts, lr_artifacts
+    return mlp_artifacts, xgb_artifacts, catboost_artifacts

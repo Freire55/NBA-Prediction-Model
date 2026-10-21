@@ -74,9 +74,9 @@ def test_prune_optimized_features_toggle():
     config_enabled = TrainingConfig(prune_optimized_features=True)
     assert config_enabled.prune_optimized_features is True
     assert "EMBED_DELTA_1_MAX" in config_enabled.features_to_remove["xgb"]
-    assert "HOME_B2B" in config_enabled.features_to_remove["lr"]
+    assert "lr" not in config_enabled.features_to_remove
 
     config_disabled = TrainingConfig(prune_optimized_features=False)
     assert config_disabled.prune_optimized_features is False
     assert "EMBED_DELTA_1_MAX" not in config_disabled.features_to_remove["xgb"]
-    assert "HOME_B2B" not in config_disabled.features_to_remove["lr"]
+    assert "lr" not in config_disabled.features_to_remove

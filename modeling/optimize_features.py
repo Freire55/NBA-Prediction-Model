@@ -2,10 +2,10 @@
 Model-Specific Sequential Backward Selection (SBS) Optimizer.
 
 Features:
-- Independent Feature Spaces: Prunes features individually for MLP, XGB, and LR.
+- Independent Feature Spaces: Prunes features individually for MLP and XGB.
 - Partial Fast-Tracking: Retrains ONLY the model being tested; uses cached predictions for the others.
 - Model-Specific Importance: Ranks features independently per algorithm using SNR (Mean/Std).
-- Asymmetric Checkpointing: Outputs a JSON dictionary with 3 distinct removal lists.
+- Asymmetric Checkpointing: Outputs a JSON dictionary with distinct removal lists.
 """
 
 import json
@@ -23,7 +23,6 @@ from sklearn.calibration import CalibratedClassifierCV
 from sklearn.inspection import permutation_importance
 from sklearn.metrics import log_loss
 from sklearn.model_selection import TimeSeriesSplit
-from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from xgboost import XGBClassifier
 
@@ -42,8 +41,8 @@ PERMUTATION_REPEATS = 5  # Stable permutation evaluation
 MIN_IMPROVEMENT = 1e-4  # Minimum required log loss improvement to prevent fitting validation noise
 AUTO_RESUME = True
 
-DATA_DIR = Path(__file__).resolve().parent / "data"
-CHECKPOINT_DIR = Path(__file__).resolve().parent / "optimization_checkpoints"
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+CHECKPOINT_DIR = Path(__file__).resolve().parent.parent / "optimization_checkpoints"
 
 
 def apply_model_specific_reduction(master_data: TrainingData, removals: dict) -> TrainingData:
@@ -64,7 +63,6 @@ def apply_model_specific_reduction(master_data: TrainingData, removals: dict) ->
     reduced_data = TrainingData(
         mlp=reduce_fs(master_data.mlp, removals.get("mlp", [])),
         xgb=reduce_fs(master_data.xgb, removals.get("xgb", [])),
-        lr=reduce_fs(master_data.lr, removals.get("lr", [])),
         y_train=master_data.y_train,
         y_val=master_data.y_val,
         y_test=master_data.y_test,
@@ -76,7 +74,6 @@ def apply_model_specific_reduction(master_data: TrainingData, removals: dict) ->
     )
     
     scale_features(reduced_data.mlp)
-    scale_features(reduced_data.lr)
     if reduced_data.margin is not None:
         scale_features(reduced_data.margin)
     return reduced_data
@@ -104,22 +101,17 @@ def get_model_importance(model, X_val, y_val, feature_names, random_seed) -> lis
     return [feat[0] for feat in sorted(scores.items(), key=lambda x: (x[1][0], x[1][1]))]
 
 
-def compute_independent_importances(mlp_cal, xgb_cal, lr_cal, reduced_data, random_seed) -> dict:
+def compute_independent_importances(mlp_cal, xgb_cal, reduced_data, random_seed) -> dict:
     """Returns sorted weakest features independently for each model architecture."""
     return {
         "mlp": get_model_importance(mlp_cal, reduced_data.mlp.X_val_processed, reduced_data.y_val, reduced_data.mlp.feature_names, random_seed),
         "xgb": get_model_importance(xgb_cal, reduced_data.xgb.X_val, reduced_data.y_val, reduced_data.xgb.feature_names, random_seed),
-        "lr": get_model_importance(lr_cal, reduced_data.lr.X_val_processed, reduced_data.y_val, reduced_data.lr.feature_names, random_seed)
     }
 
 
 def fit_fast_model(target_model_name, base_estimator, X_train, y_train):
     """Fits an accelerated proxy model for ultra-fast candidate evaluation without shape errors."""
-    if target_model_name == "lr":
-        model = clone(base_estimator).set_params(max_iter=100, warm_start=False)
-        model.fit(X_train, y_train)
-        return model
-    elif target_model_name == "mlp":
+    if target_model_name == "mlp":
         model = clone(base_estimator).set_params(max_iter=25, early_stopping=True, n_iter_no_change=3)
         model.fit(X_train, y_train)
         return model
@@ -151,18 +143,15 @@ def partial_fast_track(
     elif target_model_name == "xgb":
         raw_model = fit_fast_model("xgb", base_estimators["xgb"], reduced_data.xgb.X_train, reduced_data.y_train)
         new_probs["xgb"] = raw_model.predict_proba(reduced_data.xgb.X_val)[:, 1]
-    elif target_model_name == "lr":
-        raw_model = fit_fast_model("lr", base_estimators["lr"], reduced_data.lr.X_train_processed, reduced_data.y_train)
-        new_probs["lr"] = raw_model.predict_proba(reduced_data.lr.X_val_processed)[:, 1]
 
     weights = np.array(frozen_weights, dtype=float).copy()
-    idx_map = {"mlp": 0, "xgb": 1, "lr": 2}
+    idx_map = {"mlp": 0, "xgb": 1}
     t_idx = idx_map.get(target_model_name, 0)
     if weights[t_idx] < 0.15:
         weights[t_idx] = 0.15
         weights = weights / weights.sum()
 
-    stacked = np.column_stack((new_probs["mlp"], new_probs["xgb"], new_probs["lr"]))
+    stacked = np.column_stack((new_probs["mlp"], new_probs["xgb"]))
     blended = np.clip(np.dot(stacked, weights), 1e-15, 1 - 1e-15)
     return float(log_loss(reduced_data.y_val, blended))
 
@@ -185,11 +174,6 @@ def fit_and_calibrate_single_model(
         cal = CalibratedClassifierCV(base, method="sigmoid", cv=tscv, n_jobs=-1)
         cal.fit(reduced_data.xgb.X_train, reduced_data.y_train)
         probs = cal.predict_proba(reduced_data.xgb.X_val)[:, 1]
-    elif target_model_name == "lr":
-        base = clone(base_estimator)
-        cal = CalibratedClassifierCV(base, method="sigmoid", cv=tscv, n_jobs=-1)
-        cal.fit(reduced_data.lr.X_train_processed, reduced_data.y_train)
-        probs = cal.predict_proba(reduced_data.lr.X_val_processed)[:, 1]
     else:
         raise ValueError(f"Unknown target model name: {target_model_name}")
 
@@ -203,39 +187,34 @@ def full_track_accept(reduced_data, base_estimators, cv_folds=3):
     
     mlp_base = clone(base_estimators["mlp"]).set_params(max_iter=80, early_stopping=True, n_iter_no_change=5)
     xgb_base = clone(base_estimators["xgb"]).set_params(tree_method="hist", n_estimators=150, n_jobs=-1, eval_metric="logloss")
-    lr_base = clone(base_estimators["lr"])
 
     mlp_cal = CalibratedClassifierCV(mlp_base, method="sigmoid", cv=tscv, n_jobs=-1)
     xgb_cal = CalibratedClassifierCV(xgb_base, method="sigmoid", cv=tscv, n_jobs=-1)
-    lr_cal = CalibratedClassifierCV(lr_base, method="sigmoid", cv=tscv, n_jobs=-1)
 
     mlp_cal.fit(reduced_data.mlp.X_train_processed, reduced_data.y_train)
     xgb_cal.fit(reduced_data.xgb.X_train, reduced_data.y_train)
-    lr_cal.fit(reduced_data.lr.X_train_processed, reduced_data.y_train)
 
     temp_artifacts = TrainingArtifacts(config=TrainingConfig(), output_dir=CHECKPOINT_DIR)
     temp_artifacts.mlp.model, temp_artifacts.mlp.feature_set = mlp_cal, reduced_data.mlp
     temp_artifacts.xgb.model, temp_artifacts.xgb.feature_set = xgb_cal, reduced_data.xgb
-    temp_artifacts.lr.model,  temp_artifacts.lr.feature_set  = lr_cal,  reduced_data.lr
 
     weights, formula = learn_ensemble_weights(
-        temp_artifacts.mlp, temp_artifacts.xgb, temp_artifacts.lr, reduced_data.y_val
+        temp_artifacts.mlp, temp_artifacts.xgb, y_val=reduced_data.y_val
     )
     
     cached_probs = {
         "mlp": mlp_cal.predict_proba(reduced_data.mlp.X_val_processed)[:, 1],
         "xgb": xgb_cal.predict_proba(reduced_data.xgb.X_val)[:, 1],
-        "lr": lr_cal.predict_proba(reduced_data.lr.X_val_processed)[:, 1]
     }
     
-    stacked = np.column_stack((cached_probs["mlp"], cached_probs["xgb"], cached_probs["lr"]))
+    stacked = np.column_stack((cached_probs["mlp"], cached_probs["xgb"]))
     blended = np.clip(np.dot(stacked, weights), 1e-15, 1 - 1e-15)
     full_logloss = log_loss(reduced_data.y_val, blended)
     
-    return mlp_cal, xgb_cal, lr_cal, weights, formula, cached_probs, full_logloss
+    return mlp_cal, xgb_cal, weights, formula, cached_probs, full_logloss
 
 
-def save_lean_checkpoint(removals, best_logloss, weights, formula, config, iter_num, mlp_cal, xgb_cal, lr_cal, standalone_losses=None):
+def save_lean_checkpoint(removals, best_logloss, weights, formula, config, iter_num, mlp_cal, xgb_cal, standalone_losses=None):
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
     state = {
         "removals": removals,
@@ -245,7 +224,6 @@ def save_lean_checkpoint(removals, best_logloss, weights, formula, config, iter_
         "current_iteration": iter_num,
         "mlp_model": mlp_cal,
         "xgb_model": xgb_cal,
-        "lr_model": lr_cal,
         "standalone_losses": standalone_losses,
     }
     save_joblib(state, CHECKPOINT_DIR / "best_sbs_state.pkl")
@@ -262,11 +240,11 @@ def save_lean_checkpoint(removals, best_logloss, weights, formula, config, iter_
 
 def get_base_estimators(config: TrainingConfig, checkpoint_dir: Path, data: TrainingData) -> dict:
     """Instantiates base estimators using tuned hyperparameters if available, else tunes them."""
-    search_dirs = [checkpoint_dir] + sorted(Path("models").glob("run_*"), reverse=True)
+    models_dir = Path(__file__).resolve().parent.parent / "models"
+    search_dirs = [checkpoint_dir] + sorted(models_dir.glob("run_*"), reverse=True)
     
     mlp_params = None
     xgb_params = None
-    lr_params = None
     
     for d in search_dirs:
         if (d / "mlp_best_params.json").exists() and mlp_params is None:
@@ -275,25 +253,20 @@ def get_base_estimators(config: TrainingConfig, checkpoint_dir: Path, data: Trai
         if (d / "xgb_best_params.json").exists() and xgb_params is None:
             with open(d / "xgb_best_params.json") as f:
                 xgb_params = json.load(f)
-        if (d / "lr_best_params.json").exists() and lr_params is None:
-            with open(d / "lr_best_params.json") as f:
-                lr_params = json.load(f)
 
-    if mlp_params and xgb_params and lr_params:
+    if mlp_params and xgb_params:
         logger = logging.getLogger(__name__)
         logger.info(f"Loaded existing tuned base parameters from {search_dirs[0]}.")
         mlp = MLPClassifier(**mlp_params, random_state=config.random_seed)
         xgb = XGBClassifier(**xgb_params, random_state=config.random_seed, tree_method="hist", max_bin=256, n_jobs=-1, eval_metric="logloss")
-        lr = LogisticRegression(**lr_params, random_state=config.random_seed)
-        return {"mlp": mlp, "xgb": xgb, "lr": lr}
+        return {"mlp": mlp, "xgb": xgb}
     
     logger = logging.getLogger(__name__)
     logger.info("No cached hyperparameters found; tuning base models...")
-    mlp_art, xgb_art, lr_art = tune_base_models(data, config, checkpoint_dir)
+    mlp_art, xgb_art, cb_art = tune_base_models(data, config, checkpoint_dir)
     return {
         "mlp": unwrap_base_estimator(mlp_art.model),
         "xgb": unwrap_base_estimator(xgb_art.model),
-        "lr": unwrap_base_estimator(lr_art.model),
     }
 
 
@@ -311,7 +284,7 @@ def load_resume_state(master_data: TrainingData | None = None):
     try:
         state = joblib.load(state_path)
         if master_data is not None and "removals" in state:
-            for model_name in ["mlp", "xgb", "lr"]:
+            for model_name in ["mlp", "xgb"]:
                 fs = getattr(master_data, model_name)
                 for r in state["removals"].get(model_name, []):
                     if r not in fs.X_train.columns:
@@ -332,7 +305,7 @@ def initialize_optimization_state(
     """Initializes baseline models, probabilities, and weights, or resumes from checkpoint."""
     checkpoint_state = load_resume_state(master_data) if AUTO_RESUME else None
     warm_start = checkpoint_state is not None
-    removals = {"mlp": [], "xgb": [], "lr": []}
+    removals = {"mlp": [], "xgb": []}
 
     if warm_start:
         logger.info("[Resume] Restoring optimization state from previous checkpoint.")
@@ -340,35 +313,31 @@ def initialize_optimization_state(
         best_full_logloss = float(checkpoint_state.get("logloss", np.inf))
         current_weights = checkpoint_state.get("ensemble_weights")
         current_formula = checkpoint_state.get(
-            "best_formula", {"MLP": 1/3, "XGBoost": 1/3, "Logistic Regression": 1/3}
+            "best_formula", {"MLP": 0.5, "XGBoost": 0.5}
         )
         mlp_cal = checkpoint_state.get("mlp_model")
         xgb_cal = checkpoint_state.get("xgb_model")
-        lr_cal = checkpoint_state.get("lr_model")
         iteration = int(checkpoint_state.get("current_iteration", 0)) + 1
 
         current_data = apply_model_specific_reduction(master_data, removals)
         current_cached_probs = {
             "mlp": mlp_cal.predict_proba(current_data.mlp.X_val_processed)[:, 1],
             "xgb": xgb_cal.predict_proba(current_data.xgb.X_val)[:, 1],
-            "lr": lr_cal.predict_proba(current_data.lr.X_val_processed)[:, 1],
         }
         current_standalone_losses = checkpoint_state.get("standalone_losses") or {
             "mlp": float(log_loss(current_data.y_val, current_cached_probs["mlp"])),
             "xgb": float(log_loss(current_data.y_val, current_cached_probs["xgb"])),
-            "lr":  float(log_loss(current_data.y_val, current_cached_probs["lr"])),
         }
         base_estimators = {
             "mlp": unwrap_base_estimator(mlp_cal),
             "xgb": unwrap_base_estimator(xgb_cal),
-            "lr": unwrap_base_estimator(lr_cal),
         }
 
         logger.info(f"[Resume] Restored removals: {json.dumps(removals, indent=4)}")
         logger.info(f"[Resume] Restored validation log loss: {best_full_logloss:.5f}")
         logger.info(
             f"[Resume] Standalone Losses: MLP: {current_standalone_losses['mlp']:.5f} | "
-            f"XGB: {current_standalone_losses['xgb']:.5f} | LR: {current_standalone_losses['lr']:.5f}"
+            f"XGB: {current_standalone_losses['xgb']:.5f}"
         )
         logger.info(f"[Resume] Resume iteration continues at {iteration}")
     else:
@@ -379,7 +348,7 @@ def initialize_optimization_state(
 
         base_estimators = get_base_estimators(config, CHECKPOINT_DIR, temp_artifacts.data)
         (
-            mlp_cal, xgb_cal, lr_cal,
+            mlp_cal, xgb_cal,
             current_weights, current_formula,
             current_cached_probs, best_full_logloss
         ) = full_track_accept(temp_artifacts.data, base_estimators, config.cv_folds)
@@ -387,21 +356,20 @@ def initialize_optimization_state(
         current_standalone_losses = {
             "mlp": float(log_loss(temp_artifacts.data.y_val, current_cached_probs["mlp"])),
             "xgb": float(log_loss(temp_artifacts.data.y_val, current_cached_probs["xgb"])),
-            "lr":  float(log_loss(temp_artifacts.data.y_val, current_cached_probs["lr"])),
         }
         iteration = 1
 
         logger.info(f"Baseline Full-Track LogLoss: {best_full_logloss:.5f}")
         logger.info(
             f"Baseline Standalone Losses: MLP: {current_standalone_losses['mlp']:.5f} | "
-            f"XGB: {current_standalone_losses['xgb']:.5f} | LR: {current_standalone_losses['lr']:.5f}"
+            f"XGB: {current_standalone_losses['xgb']:.5f}"
         )
         logger.info(f"Baseline Ensemble Formula: {current_formula}")
         logger.info(f"Baseline completed in {format_time(time.perf_counter() - baseline_start)}\n")
 
         save_lean_checkpoint(
             removals, best_full_logloss, current_weights,
-            current_formula, config, 0, mlp_cal, xgb_cal, lr_cal,
+            current_formula, config, 0, mlp_cal, xgb_cal,
             current_standalone_losses
         )
 
@@ -412,7 +380,6 @@ def initialize_optimization_state(
         "current_formula": current_formula,
         "mlp_cal": mlp_cal,
         "xgb_cal": xgb_cal,
-        "lr_cal": lr_cal,
         "current_cached_probs": current_cached_probs,
         "current_standalone_losses": current_standalone_losses,
         "base_estimators": base_estimators,
@@ -428,7 +395,7 @@ def build_candidate_queue(
 ) -> list[tuple[str, str]]:
     """Builds an interleaved queue of candidate features across model architectures."""
     model_queues = {}
-    for model_name in ["mlp", "xgb", "lr"]:
+    for model_name in ["mlp", "xgb"]:
         valid_features = [
             f for f in weakest_features.get(model_name, [])
             if f not in removals[model_name] and f not in tested_in_current_state[model_name]
@@ -437,7 +404,7 @@ def build_candidate_queue(
 
     candidates = []
     for i in range(batch_size):
-        for model_name in ["mlp", "xgb", "lr"]:
+        for model_name in ["mlp", "xgb"]:
             if model_name in model_queues and i < len(model_queues[model_name]):
                 candidates.append((model_name, model_queues[model_name][i]))
     return candidates
@@ -480,7 +447,7 @@ def evaluate_candidate_feature(
     candidate_probs = deepcopy(current_cached_probs)
     candidate_probs[target_model] = new_target_probs
 
-    stacked = np.column_stack((candidate_probs["mlp"], candidate_probs["xgb"], candidate_probs["lr"]))
+    stacked = np.column_stack((candidate_probs["mlp"], candidate_probs["xgb"]))
     blended = np.clip(np.dot(stacked, current_weights), 1e-15, 1 - 1e-15)
     test_full_logloss = float(log_loss(reduced_data.y_val, blended))
 
@@ -511,7 +478,6 @@ def finalize_accepted_batch(
     removals: dict[str, list[str]],
     mlp_cal: object,
     xgb_cal: object,
-    lr_cal: object,
     current_cached_probs: dict[str, np.ndarray],
     config: TrainingConfig,
     iteration: int,
@@ -522,19 +488,18 @@ def finalize_accepted_batch(
     temp_artifacts = TrainingArtifacts(config=config, output_dir=CHECKPOINT_DIR)
     temp_artifacts.mlp.model, temp_artifacts.mlp.feature_set = mlp_cal, current_data.mlp
     temp_artifacts.xgb.model, temp_artifacts.xgb.feature_set = xgb_cal, current_data.xgb
-    temp_artifacts.lr.model,  temp_artifacts.lr.feature_set  = lr_cal,  current_data.lr
 
     new_weights, new_formula = learn_ensemble_weights(
-        temp_artifacts.mlp, temp_artifacts.xgb, temp_artifacts.lr, current_data.y_val
+        temp_artifacts.mlp, temp_artifacts.xgb, y_val=current_data.y_val
     )
 
-    stacked = np.column_stack((current_cached_probs["mlp"], current_cached_probs["xgb"], current_cached_probs["lr"]))
+    stacked = np.column_stack((current_cached_probs["mlp"], current_cached_probs["xgb"]))
     blended = np.clip(np.dot(stacked, new_weights), 1e-15, 1 - 1e-15)
     best_full_logloss = float(log_loss(current_data.y_val, blended))
 
     save_lean_checkpoint(
         removals, best_full_logloss, new_weights,
-        new_formula, config, iteration, mlp_cal, xgb_cal, lr_cal,
+        new_formula, config, iteration, mlp_cal, xgb_cal,
         current_standalone_losses
     )
     return new_weights, new_formula, best_full_logloss
@@ -587,7 +552,6 @@ def main():
     current_formula = state["current_formula"]
     mlp_cal = state["mlp_cal"]
     xgb_cal = state["xgb_cal"]
-    lr_cal = state["lr_cal"]
     current_cached_probs = state["current_cached_probs"]
     current_standalone_losses = state["current_standalone_losses"]
     base_estimators = state["base_estimators"]
@@ -598,7 +562,7 @@ def main():
     # ==========================================
     logger.info("Beginning Independent Elimination Loop...")
     consecutive_failures = 0
-    tested_in_current_state = {m: set() for m in ["mlp", "xgb", "lr"]}
+    tested_in_current_state = {m: set() for m in ["mlp", "xgb"]}
     need_recompute_importances = True
     weakest_features = {}
     current_fast_baselines = {}
@@ -608,9 +572,9 @@ def main():
             logger.info(f"\n--- Computing Independent Importances (Iter {iteration}) ---")
             current_data = apply_model_specific_reduction(master_data, removals)
             weakest_features = compute_independent_importances(
-                mlp_cal, xgb_cal, lr_cal, current_data, config.random_seed
+                mlp_cal, xgb_cal, current_data, config.random_seed
             )
-            for m in ["mlp", "xgb", "lr"]:
+            for m in ["mlp", "xgb"]:
                 current_fast_baselines[m] = partial_fast_track(
                     m, current_data, base_estimators, current_cached_probs, current_weights
                 )
@@ -649,21 +613,19 @@ def main():
                     mlp_cal = new_cal
                 elif target_model == "xgb":
                     xgb_cal = new_cal
-                elif target_model == "lr":
-                    lr_cal = new_cal
                 
                 removals = test_removals
                 batch_accepted_count += 1
                 
                 current_data = apply_model_specific_reduction(master_data, removals)
-                for m in ["mlp", "xgb", "lr"]:
+                for m in ["mlp", "xgb"]:
                     current_fast_baselines[m] = partial_fast_track(
                         m, current_data, base_estimators, current_cached_probs, current_weights
                     )
                 
                 save_lean_checkpoint(
                     removals, best_full_logloss, current_weights, 
-                    current_formula, config, iteration, mlp_cal, xgb_cal, lr_cal,
+                    current_formula, config, iteration, mlp_cal, xgb_cal,
                     current_standalone_losses
                 )
 
@@ -671,8 +633,8 @@ def main():
                 logger.info(f"\n--- OPTIMIZATION UPDATE ---")
                 logger.info(f"Dropped:           [{feature}] from [{target_model.upper()}]")
                 logger.info(f"Current LogLoss:   {best_full_logloss:.5f}")
-                logger.info(f"Standalone Losses: MLP: {current_standalone_losses['mlp']:.5f} | XGB: {current_standalone_losses['xgb']:.5f} | LR: {current_standalone_losses['lr']:.5f}")
-                logger.info(f"Current Ensemble:  MLP: {current_formula.get('MLP', 0.0):.2f} | XGB: {current_formula.get('XGBoost', 0.0):.2f} | LR: {current_formula.get('Logistic Regression', 0.0):.2f}")
+                logger.info(f"Standalone Losses: MLP: {current_standalone_losses['mlp']:.5f} | XGB: {current_standalone_losses['xgb']:.5f}")
+                logger.info(f"Current Ensemble:  MLP: {current_formula.get('MLP', 0.0):.2f} | XGB: {current_formula.get('XGBoost', 0.0):.2f}")
                 logger.info(f"---------------------------\n")
             else:
                 logger.info(f"  ✖ Candidate completed in {format_time(time.perf_counter() - iter_start)}")
@@ -680,11 +642,11 @@ def main():
         if batch_accepted_count > 0:
             logger.info(f"\n=== BATCH COMPLETE: Pruned {batch_accepted_count} features in Iteration {iteration} ===")
             current_weights, current_formula, best_full_logloss = finalize_accepted_batch(
-                master_data, removals, mlp_cal, xgb_cal, lr_cal,
+                master_data, removals, mlp_cal, xgb_cal,
                 current_cached_probs, config, iteration, current_standalone_losses
             )
             consecutive_failures = 0
-            tested_in_current_state = {m: set() for m in ["mlp", "xgb", "lr"]}
+            tested_in_current_state = {m: set() for m in ["mlp", "xgb"]}
             need_recompute_importances = True
         else:
             consecutive_failures += 1

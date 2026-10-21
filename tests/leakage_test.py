@@ -140,7 +140,7 @@ def test_player_features_perturbation_invariance():
     Verifies that mutating player post-game statistics in game T or future games T+1
     leaves pre-game rolling stats (OBPM, DBPM, Spacing Gravity, Assists) for game T bitwise identical.
     """
-    from feature_engineering_players import (
+    from feature_engineering.feature_engineering_players import (
         calculate_obpm_proxy,
         calculate_dbpm_proxy,
         calculate_player_four_factors,

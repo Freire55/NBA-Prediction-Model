@@ -21,7 +21,7 @@ from pathlib import Path
 # ======================================================
 # Constants & Configuration
 # ======================================================
-DATA_DIR = Path(__file__).resolve().parent / "data"
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 # Rolling feature parameters
 ROLLING_WINDOW = 8
@@ -31,9 +31,24 @@ EWMA_SPANS = (5, 10)
 INITIAL_ELO = 1500
 ELO_K_FACTOR = 20
 ELO_DIVISOR = 400
-ELO_EARLY_SEASON_BOOST = 0.3
-ELO_EARLY_SEASON_HALF_LIFE = 8.0
+ELO_EARLY_SEASON_BOOST = 0.75
+ELO_EARLY_SEASON_HALF_LIFE = 4.5
 HOME_COURT_ADVANTAGE_ELO = 70.0
+
+# Roster continuity parameters (historical league medians)
+DEFAULT_ROSTER_CONTINUITY_MIN = 0.67
+DEFAULT_ROSTER_CONTINUITY_OFF = 0.69
+DEFAULT_ROSTER_CONTINUITY_DEF = 0.69
+
+# Historical franchise predecessors for relocation / rebrand tracking
+FRANCHISE_PREDECESSORS: dict[str, str] = {
+    "OKC": "SEA",
+    "BKN": "NJN",
+    "MEM": "VAN",
+    "NOP": "NOH",
+    "NOK": "NOH",
+    "CHA": "CHH",
+}
 
 # Basketball constants
 POSSESSION_FT_WEIGHT = 0.44
@@ -169,9 +184,41 @@ def rolling_sum(series: pd.Series, rolling_window: int = ROLLING_WINDOW) -> pd.S
     return series.shift(1).rolling(rolling_window, min_periods=1).sum()
 
 
-def ewma(series: pd.Series, span: int = ROLLING_WINDOW) -> pd.Series:
-    """Computes an exponentially weighted moving average using only prior observations."""
-    return series.shift(1).ewm(adjust=False, span=span).mean()
+def ewma(series: pd.Series, span: int = ROLLING_WINDOW, season_games: pd.Series = None) -> pd.Series:
+    """
+    Computes an exponentially weighted moving average using only prior observations.
+
+    If season_games is provided, adaptively scales early-season span from 4 up to span
+    over the first 10 games of each season. This allows new-season performance to establish
+    itself in ~10 games rather than lingering for 15-20 games.
+    """
+    if season_games is None:
+        return series.shift(1).ewm(adjust=False, span=span).mean()
+
+    vals = series.shift(1).to_numpy(dtype=float)
+    n_games = season_games.shift(1).fillna(0).to_numpy(dtype=int)
+    out = np.empty_like(vals)
+    if len(vals) == 0:
+        return series.shift(1)
+
+    first_valid = 100.0
+    for v in vals:
+        if not np.isnan(v):
+            first_valid = v
+            break
+    out[0] = vals[0] if not np.isnan(vals[0]) else first_valid
+
+    for i in range(1, len(vals)):
+        x_val = vals[i]
+        if np.isnan(x_val):
+            out[i] = out[i - 1]
+            continue
+        n = n_games[i]
+        eff_span = min(span, max(4, n + 2))
+        alpha = 2.0 / (eff_span + 1.0)
+        out[i] = alpha * x_val + (1.0 - alpha) * out[i - 1]
+
+    return pd.Series(out, index=series.index)
 
 
 
@@ -298,9 +345,191 @@ def add_four_factors(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def calculate_roster_continuity(
+    player_logs_path: Path = DATA_DIR / "raw_player_game_logs.csv",
+    cache_path: Path = DATA_DIR / "roster_continuity.csv",
+) -> pd.DataFrame:
+    """
+    Computes inter-season roster continuity percentages:
+    - ROSTER_CONTINUITY_MIN_PCT: % of prior season's minutes played by returning players.
+    - ROSTER_CONTINUITY_OFF_PCT: % of prior season's offensive value produced by returning players.
+    - ROSTER_CONTINUITY_DEF_PCT: % of prior season's defensive value produced by returning players.
+    """
+    if cache_path.exists():
+        try:
+            return pd.read_csv(cache_path)
+        except Exception as e:
+            logger.warning("Could not read cached roster continuity: %s. Recomputing...", e)
+
+    if not player_logs_path.exists():
+        logger.warning("Player logs file '%s' not found. Cannot compute roster continuity.", player_logs_path)
+        return pd.DataFrame(columns=[
+            "SEASON_ID", "TEAM_ABBREVIATION",
+            "ROSTER_CONTINUITY_MIN_PCT", "ROSTER_CONTINUITY_OFF_PCT", "ROSTER_CONTINUITY_DEF_PCT",
+        ])
+
+    logger.info("Computing multi-season roster continuity from player logs...")
+    usecols = [
+        "SEASON_ID", "TEAM_ABBREVIATION", "PLAYER_ID", "MIN",
+        "PTS", "AST", "OREB", "DREB", "STL", "BLK", "TOV", "PF",
+    ]
+    logs_df = pd.read_csv(player_logs_path, usecols=usecols)
+
+    # Parse minutes (MM:SS or decimal)
+    time_split = logs_df["MIN"].astype(str).str.split(":", expand=True)
+    if 1 not in time_split.columns:
+        time_split[1] = 0
+    logs_df["MINUTES_NUM"] = (
+        pd.to_numeric(time_split[0], errors="coerce").fillna(0.0)
+        + pd.to_numeric(time_split[1], errors="coerce").fillna(0.0) / 60.0
+    )
+
+    # Offensive and defensive production values
+    logs_df["OFF_VAL"] = (
+        logs_df["PTS"]
+        + 0.7 * logs_df["AST"].fillna(0.0)
+        + 0.7 * logs_df["OREB"].fillna(0.0)
+        - 1.0 * logs_df["TOV"].fillna(0.0)
+    )
+    logs_df["DEF_VAL"] = (
+        logs_df["STL"].fillna(0.0)
+        + logs_df["BLK"].fillna(0.0)
+        + 0.7 * logs_df["DREB"].fillna(0.0)
+        - 0.5 * logs_df["PF"].fillna(0.0)
+    )
+
+    p_agg = logs_df.groupby(["SEASON_ID", "TEAM_ABBREVIATION", "PLAYER_ID"]).agg({
+        "MINUTES_NUM": "sum",
+        "OFF_VAL": "sum",
+        "DEF_VAL": "sum",
+    }).reset_index()
+
+    t_agg = p_agg.groupby(["SEASON_ID", "TEAM_ABBREVIATION"]).agg({
+        "MINUTES_NUM": "sum",
+        "OFF_VAL": "sum",
+        "DEF_VAL": "sum",
+    }).reset_index().rename(columns={
+        "MINUTES_NUM": "TEAM_MIN",
+        "OFF_VAL": "TEAM_OFF",
+        "DEF_VAL": "TEAM_DEF",
+    })
+
+    seasons = sorted(logs_df["SEASON_ID"].unique())
+    records = []
+
+    # First season: set historical league defaults
+    first_season_teams = t_agg[t_agg["SEASON_ID"] == seasons[0]]["TEAM_ABBREVIATION"].unique()
+    for team in first_season_teams:
+        records.append({
+            "SEASON_ID": seasons[0],
+            "TEAM_ABBREVIATION": team,
+            "ROSTER_CONTINUITY_MIN_PCT": DEFAULT_ROSTER_CONTINUITY_MIN,
+            "ROSTER_CONTINUITY_OFF_PCT": DEFAULT_ROSTER_CONTINUITY_OFF,
+            "ROSTER_CONTINUITY_DEF_PCT": DEFAULT_ROSTER_CONTINUITY_DEF,
+        })
+
+    for i in range(1, len(seasons)):
+        prev_s = seasons[i - 1]
+        curr_s = seasons[i]
+
+        prev_p = p_agg[p_agg["SEASON_ID"] == prev_s]
+        curr_p = p_agg[p_agg["SEASON_ID"] == curr_s]
+        prev_t = t_agg[t_agg["SEASON_ID"] == prev_s]
+        curr_teams = t_agg[t_agg["SEASON_ID"] == curr_s]["TEAM_ABBREVIATION"].unique()
+
+        for curr_team in curr_teams:
+            prev_team = FRANCHISE_PREDECESSORS.get(curr_team, curr_team)
+            p_prev = prev_p[prev_p["TEAM_ABBREVIATION"] == prev_team]
+            p_curr = curr_p[curr_p["TEAM_ABBREVIATION"] == curr_team]
+
+            p_ret = p_prev.merge(
+                p_curr[["PLAYER_ID"]].drop_duplicates(),
+                on="PLAYER_ID",
+                how="inner",
+            )
+            ret_min = float(p_ret["MINUTES_NUM"].sum())
+            ret_off = float(p_ret["OFF_VAL"].sum())
+            ret_def = float(p_ret["DEF_VAL"].sum())
+
+            t_prev_match = prev_t[prev_t["TEAM_ABBREVIATION"] == prev_team]
+            if len(t_prev_match) > 0:
+                tot_min = max(float(t_prev_match["TEAM_MIN"].iloc[0]), 1.0)
+                tot_off = max(float(t_prev_match["TEAM_OFF"].iloc[0]), 1.0)
+                tot_def = max(float(t_prev_match["TEAM_DEF"].iloc[0]), 1.0)
+
+                min_pct = float(np.clip(ret_min / tot_min, 0.0, 1.0))
+                off_pct = float(np.clip(ret_off / tot_off, 0.0, 1.0))
+                def_pct = float(np.clip(ret_def / tot_def, 0.0, 1.0))
+            else:
+                min_pct = DEFAULT_ROSTER_CONTINUITY_MIN
+                off_pct = DEFAULT_ROSTER_CONTINUITY_OFF
+                def_pct = DEFAULT_ROSTER_CONTINUITY_DEF
+
+            records.append({
+                "SEASON_ID": curr_s,
+                "TEAM_ABBREVIATION": curr_team,
+                "ROSTER_CONTINUITY_MIN_PCT": round(min_pct, 4),
+                "ROSTER_CONTINUITY_OFF_PCT": round(off_pct, 4),
+                "ROSTER_CONTINUITY_DEF_PCT": round(def_pct, 4),
+            })
+
+    continuity_df = pd.DataFrame(records)
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        continuity_df.to_csv(cache_path, index=False)
+        logger.info("Saved roster continuity to '%s' (%d records).", cache_path.name, len(continuity_df))
+    except Exception as e:
+        logger.warning("Could not cache roster continuity: %s", e)
+
+    return continuity_df
+
+
+def add_roster_continuity_features(
+    df: pd.DataFrame,
+    continuity_df: pd.DataFrame = None,
+) -> pd.DataFrame:
+    """
+    Merges season-level roster continuity metrics (% minutes, % off, % def retained) into the game logs.
+    """
+    if "ROSTER_CONTINUITY_MIN_PCT" in df.columns:
+        return df
+
+    if continuity_df is None:
+        continuity_df = calculate_roster_continuity()
+
+    if continuity_df is None or len(continuity_df) == 0:
+        df["ROSTER_CONTINUITY_MIN_PCT"] = DEFAULT_ROSTER_CONTINUITY_MIN
+        df["ROSTER_CONTINUITY_OFF_PCT"] = DEFAULT_ROSTER_CONTINUITY_OFF
+        df["ROSTER_CONTINUITY_DEF_PCT"] = DEFAULT_ROSTER_CONTINUITY_DEF
+        return df
+
+    # Harmonize SEASON_ID type for merging
+    df_season_type = df["SEASON_ID"].dtype if "SEASON_ID" in df.columns else None
+    cont_copy = continuity_df.copy()
+    if df_season_type is not None:
+        try:
+            cont_copy["SEASON_ID"] = cont_copy["SEASON_ID"].astype(df_season_type)
+        except Exception:
+            cont_copy["SEASON_ID"] = cont_copy["SEASON_ID"].astype(str)
+            df["SEASON_ID"] = df["SEASON_ID"].astype(str)
+
+    df = df.merge(cont_copy, on=["SEASON_ID", "TEAM_ABBREVIATION"], how="left")
+    df["ROSTER_CONTINUITY_MIN_PCT"] = df["ROSTER_CONTINUITY_MIN_PCT"].fillna(DEFAULT_ROSTER_CONTINUITY_MIN)
+    df["ROSTER_CONTINUITY_OFF_PCT"] = df["ROSTER_CONTINUITY_OFF_PCT"].fillna(DEFAULT_ROSTER_CONTINUITY_OFF)
+    df["ROSTER_CONTINUITY_DEF_PCT"] = df["ROSTER_CONTINUITY_DEF_PCT"].fillna(DEFAULT_ROSTER_CONTINUITY_DEF)
+    return df
+
+
 def add_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
     """Calculates chronologically pure rolling averages and strength of schedule."""
     df = add_four_factors(df)
+
+    has_season = "SEASON_ID" in df.columns
+    if has_season:
+        df["_SEASON_GAME_COUNT"] = df.groupby(["SEASON_ID", "TEAM_ABBREVIATION"]).cumcount()
+    else:
+        df["_SEASON_GAME_COUNT"] = 10
+
     team_groups = df.groupby('TEAM_ABBREVIATION')
     
     fga = df['FGA'] if 'FGA' in df.columns else pd.Series(85.0, index=df.index)
@@ -316,15 +545,8 @@ def add_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
     df['ROLLING_OFF_RATING'] = (df[f'ROLLING_PTS_{ROLLING_WINDOW}'] / df[f'ROLLING_POSS_{ROLLING_WINDOW}']) * 100
     df['ROLLING_OFF_RATING'] = df['ROLLING_OFF_RATING'].fillna(DEFAULT_OFF_RATING)
 
-    df["OFF_RATING_EWMA_5"] = (
-        team_groups["ROLLING_OFF_RATING"]
-        .transform(lambda x: ewma(x, span=5))
-    )
-
-    df["OFF_RATING_EWMA_10"] = (
-        team_groups["ROLLING_OFF_RATING"]
-        .transform(lambda x: ewma(x, span=10))
-    )
+    # Single-game offensive rating proxy for pure EWMA tracking (strictly shifted inside ewma)
+    df['_TMP_OFF_RATING'] = ((pts / df['POSSESSIONS'].replace(0, np.nan)) * 100.0).fillna(DEFAULT_OFF_RATING)
 
     # Opponent box-score tracking (vectorized 2-team game subtraction)
     has_game_id = 'GAME_ID' in df.columns
@@ -409,20 +631,31 @@ def add_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
 
     team_groups = df.groupby('TEAM_ABBREVIATION')
     for span in EWMA_SPANS:
-        ewma_opp_3pt = team_groups['_TMP_OPP_3PT'].transform(lambda x, s=span: ewma(x, span=s)).fillna(LEAGUE_AVERAGE_3PT_PCT)
+        df[f'OFF_RATING_EWMA_{span}'] = (
+            team_groups['_TMP_OFF_RATING'].transform(
+                lambda x, s=span: ewma(x, span=s, season_games=df.loc[x.index, "_SEASON_GAME_COUNT"])
+            ).fillna(DEFAULT_OFF_RATING)
+        )
+        ewma_opp_3pt = team_groups['_TMP_OPP_3PT'].transform(
+            lambda x, s=span: ewma(x, span=s, season_games=df.loc[x.index, "_SEASON_GAME_COUNT"])
+        ).fillna(LEAGUE_AVERAGE_3PT_PCT)
         df[f'D_3PT_TRUE_EWMA_{span}'] = (
             OPP_3PT_VARIANCE_REGRESSION_WEIGHT * ewma_opp_3pt
             + (1.0 - OPP_3PT_VARIANCE_REGRESSION_WEIGHT) * LEAGUE_AVERAGE_3PT_PCT
         )
         df[f'OPP_3PA_RATE_EWMA_{span}'] = (
-            team_groups['_TMP_OPP_3PA_RATE'].transform(lambda x, s=span: ewma(x, span=s)).fillna(0.350)
+            team_groups['_TMP_OPP_3PA_RATE'].transform(
+                lambda x, s=span: ewma(x, span=s, season_games=df.loc[x.index, "_SEASON_GAME_COUNT"])
+            ).fillna(0.350)
         )
         df[f'DEF_RATING_EWMA_{span}'] = (
-            team_groups['_TMP_DEF_RATING'].transform(lambda x, s=span: ewma(x, span=s)).fillna(DEFAULT_OFF_RATING)
+            team_groups['_TMP_DEF_RATING'].transform(
+                lambda x, s=span: ewma(x, span=s, season_games=df.loc[x.index, "_SEASON_GAME_COUNT"])
+            ).fillna(DEFAULT_OFF_RATING)
         )
         df[f'NET_RATING_EWMA_{span}'] = df[f'OFF_RATING_EWMA_{span}'] - df[f'DEF_RATING_EWMA_{span}']
 
-    df = df.drop(columns=['_TMP_OPP_3PT', '_TMP_OPP_3PA_RATE', '_TMP_DEF_RATING'])
+    df = df.drop(columns=['_TMP_OFF_RATING', '_TMP_OPP_3PT', '_TMP_OPP_3PA_RATE', '_TMP_DEF_RATING'])
 
     # Standardize historical memory for Z-stats
     z_columns = [col for col in df.columns if col.startswith("Z_")]
@@ -476,19 +709,14 @@ def add_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
         'FOUR_FACTOR_FTR',
     ]
 
+    ff_rolling = team_groups[four_factor_columns].transform(rolling_mean).fillna(0)
     for col in four_factor_columns:
-        df[f'{col}_ROLLING_{ROLLING_WINDOW}'] = (
-            team_groups[col]
-            .transform(rolling_mean)
-            .fillna(0)
-        )
+        df[f'{col}_ROLLING_{ROLLING_WINDOW}'] = ff_rolling[col]
 
-        for span in EWMA_SPANS:
-            df[f'{col}_EWMA_{span}'] = (
-                team_groups[col]
-                .transform(lambda x, s=span: ewma(x, span=s))
-                .fillna(0)
-            )
+    for span in EWMA_SPANS:
+        ff_ewma = team_groups[four_factor_columns].transform(lambda x, s=span: ewma(x, span=s)).fillna(0)
+        for col in four_factor_columns:
+            df[f'{col}_EWMA_{span}'] = ff_ewma[col]
             
     # Calculate game-level Pace: Possessions per 48 minutes
     # In NBA team box scores, MIN is total player minutes (240 in regulation: 5 * 48 min).
@@ -517,6 +745,7 @@ def add_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
             .fillna(100.0)
         )
 
+    df = df.drop(columns=['_SEASON_GAME_COUNT'], errors='ignore')
     return df
 
 
@@ -526,8 +755,19 @@ def simulate_elo(df: pd.DataFrame) -> pd.DataFrame:
     season_games = {}
     pre_game_elo_records = []
 
-    # Vectorized extraction of home and away match pairs (100x faster than df.groupby)
+    # Check for season-level roster continuity mapping
     has_season = "SEASON_ID" in df.columns
+    has_continuity = "ROSTER_CONTINUITY_MIN_PCT" in df.columns
+    if has_continuity and has_season:
+        cont_subset = df[["SEASON_ID", "TEAM_ABBREVIATION", "ROSTER_CONTINUITY_MIN_PCT"]].drop_duplicates()
+        continuity_map = {
+            (row.SEASON_ID, row.TEAM_ABBREVIATION): float(row.ROSTER_CONTINUITY_MIN_PCT)
+            for row in cont_subset.itertuples()
+        }
+    else:
+        continuity_map = {}
+
+    # Vectorized extraction of home and away match pairs (100x faster than df.groupby)
     home_cols = ["GAME_ID", "GAME_DATE", "TEAM_ABBREVIATION", "PTS"] + (["SEASON_ID"] if has_season else [])
     away_cols = ["GAME_ID", "TEAM_ABBREVIATION", "PTS"]
 
@@ -549,7 +789,14 @@ def simulate_elo(df: pd.DataFrame) -> pd.DataFrame:
     ):
         if last_season is not None and season is not None and season != last_season:
             for team in current_elo:
-                current_elo[team] = (current_elo[team] * 0.75) + (INITIAL_ELO * 0.25)
+                cont_min = continuity_map.get((season, team), None)
+                if cont_min is not None and not np.isnan(cont_min):
+                    # Roster continuity retention: High continuity retains more prior Elo (up to 0.85),
+                    # low continuity regresses heavily toward league mean INITIAL_ELO (down to 0.50)
+                    retention_w = float(np.clip(0.50 + 0.35 * cont_min, 0.50, 0.85))
+                else:
+                    retention_w = 0.75  # Standard fallback when continuity is unknown
+                current_elo[team] = (current_elo[team] * retention_w) + (INITIAL_ELO * (1.0 - retention_w))
             season_games.clear()
         last_season = season
 
@@ -561,11 +808,11 @@ def simulate_elo(df: pd.DataFrame) -> pd.DataFrame:
         home_elo_pre = current_elo[h_team]
         away_elo_pre = current_elo[a_team]
 
-        pre_game_elo_records.append((game_id, h_team, home_elo_pre))
-        pre_game_elo_records.append((game_id, a_team, away_elo_pre))
-
         n_h = season_games.get(h_team, 0)
         n_a = season_games.get(a_team, 0)
+
+        pre_game_elo_records.append((game_id, h_team, home_elo_pre, n_h))
+        pre_game_elo_records.append((game_id, a_team, away_elo_pre, n_a))
 
         elo_diff = (home_elo_pre + HOME_COURT_ADVANTAGE_ELO) - away_elo_pre
         home_prob = 1.0 / (1.0 + 10.0 ** (-elo_diff / ELO_DIVISOR))
@@ -585,7 +832,10 @@ def simulate_elo(df: pd.DataFrame) -> pd.DataFrame:
         season_games[h_team] = n_h + 1
         season_games[a_team] = n_a + 1
 
-    elo_df = pd.DataFrame(pre_game_elo_records, columns=["GAME_ID", "TEAM_ABBREVIATION", "PRE_GAME_ELO"])
+    elo_df = pd.DataFrame(
+        pre_game_elo_records,
+        columns=["GAME_ID", "TEAM_ABBREVIATION", "PRE_GAME_ELO", "SEASON_GAME_NUMBER"],
+    )
     df = df.merge(elo_df, on=["GAME_ID", "TEAM_ABBREVIATION"], how="left")
     return df
 
@@ -607,6 +857,27 @@ def add_schedule_and_elo_deltas(matchups_df: pd.DataFrame) -> pd.DataFrame:
     """Computes differential fatigue, schedule density, and Elo ratings."""
     matchups_df['REST_ADVANTAGE'] = matchups_df['HOME_REST_DAYS'] - matchups_df['AWAY_REST_DAYS']
     matchups_df['DELTA_ELO'] = matchups_df['HOME_PRE_GAME_ELO'] - matchups_df['AWAY_PRE_GAME_ELO']
+
+    # Roster continuity deltas (% minutes, % off, % def retained from prior season)
+    for suffix in ["MIN_PCT", "OFF_PCT", "DEF_PCT"]:
+        h_col = f"HOME_ROSTER_CONTINUITY_{suffix}"
+        a_col = f"AWAY_ROSTER_CONTINUITY_{suffix}"
+        if h_col in matchups_df.columns and a_col in matchups_df.columns:
+            matchups_df[f"DELTA_ROSTER_CONTINUITY_{suffix}"] = matchups_df[h_col] - matchups_df[a_col]
+
+    # Season game count & early season progression metrics
+    if "HOME_SEASON_GAME_NUMBER" in matchups_df.columns and "AWAY_SEASON_GAME_NUMBER" in matchups_df.columns:
+        matchups_df["DELTA_SEASON_GAME_NUMBER"] = (
+            matchups_df["HOME_SEASON_GAME_NUMBER"] - matchups_df["AWAY_SEASON_GAME_NUMBER"]
+        )
+        matchups_df["MATCHUP_MIN_GAMES_PLAYED"] = np.minimum(
+            matchups_df["HOME_SEASON_GAME_NUMBER"],
+            matchups_df["AWAY_SEASON_GAME_NUMBER"],
+        )
+        matchups_df["SEASON_GAME_NUMBER"] = (
+            matchups_df["HOME_SEASON_GAME_NUMBER"] + matchups_df["AWAY_SEASON_GAME_NUMBER"]
+        ) / 2.0
+
     matchups_df['DELTA_ROAD_TRIP_LENGTH'] = matchups_df['HOME_ROAD_TRIP_LENGTH'] - matchups_df['AWAY_ROAD_TRIP_LENGTH']
     matchups_df['DELTA_3_IN_4'] = matchups_df['HOME_3_IN_4'] - matchups_df['AWAY_3_IN_4']
     matchups_df['DELTA_4_IN_5'] = matchups_df['HOME_4_IN_5'] - matchups_df['AWAY_4_IN_5']
@@ -854,6 +1125,9 @@ def main() -> None:
 
     logger.info("Calculating Deep Schedule Density (Fatigue Flags)...")
     df = add_schedule_features(df)
+
+    logger.info("Computing / Loading season-to-season roster continuity...")
+    df = add_roster_continuity_features(df)
 
     logger.info("Calculating chronologically pure rolling ratings...")
     df = add_rolling_features(df)

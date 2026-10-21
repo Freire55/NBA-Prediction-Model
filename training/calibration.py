@@ -417,6 +417,130 @@ class SplineCalibratedClassifier(BaseEstimator, ClassifierMixin):
 
 
 # ======================================================
+# Platt Calibrator Core
+# ======================================================
+
+class PlattCalibrator(BaseEstimator, ClassifierMixin):
+    """
+    Monotonic logistic regression on logits (Platt Scaling):
+        logit(P(Y=1|p)) = a * logit(p) + c, with a >= 0.
+    """
+
+    def __init__(self) -> None:
+        self.a_: float = 1.0
+        self.c_: float = 0.0
+        self.is_fitted_: bool = False
+
+    def fit_from_probabilities(
+        self,
+        p_raw: np.ndarray,
+        y: Union[pd.Series, np.ndarray],
+    ) -> "PlattCalibrator":
+        """Fits Platt scaling parameters a, c directly from raw probabilities."""
+        self.a_, self.c_, _ = _fit_platt_log_loss(p_raw, np.asarray(y, dtype=np.float64))
+        self.is_fitted_ = True
+        return self
+
+    def predict_proba(self, p_raw: np.ndarray) -> np.ndarray:
+        """Transforms raw probabilities into calibrated probability array of shape (N, 2)."""
+        if not self.is_fitted_:
+            raise RuntimeError("PlattCalibrator is not fitted yet.")
+
+        p_arr = np.asarray(p_raw, dtype=np.float64)
+        if p_arr.ndim == 2 and p_arr.shape[1] == 2:
+            p_arr = p_arr[:, 1]
+        elif p_arr.ndim == 2 and p_arr.shape[1] == 1:
+            p_arr = p_arr.ravel()
+
+        p_clipped = np.clip(p_arr, CALIBRATION_EPSILON, 1.0 - CALIBRATION_EPSILON)
+        logits = logit(p_clipped)
+        calibrated_p = np.clip(expit(self.a_ * logits + self.c_), CALIBRATION_EPSILON, 1.0 - CALIBRATION_EPSILON)
+        return np.column_stack([1.0 - calibrated_p, calibrated_p])
+
+
+# ======================================================
+# Platt Calibrated Classifier Wrapper
+# ======================================================
+
+class PlattCalibratedClassifier(BaseEstimator, ClassifierMixin):
+    """
+    Scikit-learn compatible classifier wrapper that applies Platt Sigmoid Scaling
+    using out-of-fold cross-validation probabilities without re-fitting base models.
+    """
+
+    def __init__(
+        self,
+        base_estimator: Optional[Any] = None,
+        cv: Optional[TimeSeriesSplit] = None,
+    ) -> None:
+        self.base_estimator = base_estimator
+        self.cv = cv
+        self.calibrator_ = PlattCalibrator()
+        self.estimator_: Optional[Any] = None
+        self.classes_: np.ndarray = np.array([0, 1])
+        self.is_fitted_: bool = False
+
+    def fit_with_oof(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Union[pd.Series, np.ndarray],
+        oof_probs: np.ndarray,
+        oof_targets: np.ndarray,
+        sample_weight: Optional[np.ndarray] = None,
+        **fit_params: Any,
+    ) -> "PlattCalibratedClassifier":
+        """Fits Platt calibrator on precomputed out-of-fold predictions and base estimator on full data."""
+        y_arr = np.asarray(y)
+        self.classes_ = np.unique(y_arr)
+        self.calibrator_ = PlattCalibrator().fit_from_probabilities(oof_probs, oof_targets)
+        self.estimator_ = clone(self.base_estimator)
+        if sample_weight is not None:
+            try:
+                self.estimator_.fit(X, y_arr, sample_weight=sample_weight, **fit_params)
+            except (TypeError, ValueError):
+                self.estimator_.fit(X, y_arr, **fit_params)
+        else:
+            self.estimator_.fit(X, y_arr, **fit_params)
+
+        self.is_fitted_ = True
+        return self
+
+    def fit(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Union[pd.Series, np.ndarray],
+        sample_weight: Optional[np.ndarray] = None,
+        **fit_params: Any,
+    ) -> "PlattCalibratedClassifier":
+        """Fits base estimator on full data and Platt calibrator on out-of-fold probabilities."""
+        if self.base_estimator is None:
+            raise ValueError("base_estimator cannot be None.")
+
+        cv_splitter = self.cv if self.cv is not None else TimeSeriesSplit(n_splits=5)
+        oof_probs, oof_targets = generate_oof_predictions(
+            estimator=self.base_estimator,
+            X=X,
+            y=np.asarray(y),
+            cv=cv_splitter,
+            sample_weight=sample_weight,
+        )
+        return self.fit_with_oof(X, y, oof_probs, oof_targets, sample_weight=sample_weight, **fit_params)
+
+    def predict_proba(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
+        """Returns calibrated probability distribution of shape (N, 2)."""
+        if not self.is_fitted_ or self.estimator_ is None:
+            raise RuntimeError("PlattCalibratedClassifier is not fitted yet.")
+
+        raw_probs = self.estimator_.predict_proba(X)[:, 1]
+        return self.calibrator_.predict_proba(raw_probs)
+
+    def predict(self, X: Union[pd.DataFrame, np.ndarray]) -> np.ndarray:
+        """Returns binary predictions thresholded at 0.50."""
+        probs = self.predict_proba(X)
+        return (probs[:, 1] >= 0.5).astype(np.int32)
+
+
+# ======================================================
 # Calibration Model Selection Routine
 # ======================================================
 
@@ -557,19 +681,14 @@ def calibrate_estimator_with_model_selection(
         "        Selected Platt Sigmoid Calibration (OOF LogLoss: %.4f vs Beta: %.4f, Spline: %.4f | Raw: %.4f)",
         platt_loss, beta_loss, spline_loss, raw_loss,
     )
-    selected_model = CalibratedClassifierCV(
-        estimator=clone(estimator),
-        method="sigmoid",
-        cv=tscv,
-        n_jobs=-1,
+    selected_model = PlattCalibratedClassifier(base_estimator=estimator, cv=tscv)
+    selected_model.fit_with_oof(
+        X=X_train,
+        y=y_train,
+        oof_probs=oof_probs,
+        oof_targets=oof_targets,
+        sample_weight=sample_weight,
     )
-    if sample_weight is not None:
-        try:
-            selected_model.fit(X_train, y_train, sample_weight=sample_weight)
-        except (TypeError, ValueError):
-            selected_model.fit(X_train, y_train)
-    else:
-        selected_model.fit(X_train, y_train)
     return selected_model, {
         "method": "platt",
         "raw_log_loss": round(raw_loss, 4),

@@ -142,7 +142,6 @@ def get_model_features(
             and col not in exclude_cols
         ] + safe_extra
 
-    lr_raw = _filter_candidates(config.lr_prefixes)
     xgb_raw = _filter_candidates(config.xgb_prefixes, exclude_substr="_Z_")
     mlp_raw = _filter_candidates(config.mlp_prefixes)
 
@@ -153,19 +152,15 @@ def get_model_features(
     catboost_raw = _filter_candidates(catboost_prefixes, exclude_substr="_Z_")
 
     # Apply configuration-defined feature removals / pruning
-    lr_removals = set(config.features_to_remove.get("lr", []))
     xgb_removals = set(config.features_to_remove.get("xgb", []))
     mlp_removals = set(config.features_to_remove.get("mlp", []))
     catboost_removals = set(config.features_to_remove.get("catboost", config.features_to_remove.get("xgb", [])))
-    margin_removals = set(
-        config.features_to_remove.get("margin", config.features_to_remove.get("lr", []))
-    )
+    margin_removals = set(config.features_to_remove.get("margin", []))
 
     return {
         "mlp": [f for f in dict.fromkeys(mlp_raw) if f not in mlp_removals],
         "xgb": [f for f in dict.fromkeys(xgb_raw) if f not in xgb_removals],
         "catboost": [f for f in dict.fromkeys(catboost_raw) if f not in catboost_removals],
-        "lr": [f for f in dict.fromkeys(lr_raw) if f not in lr_removals],
         "margin": [f for f in dict.fromkeys(margin_raw) if f not in margin_removals],
     }
 
@@ -275,7 +270,6 @@ def load_and_prep_data(
         train_games=len(train_df),
         validation_games=len(val_df),
         test_games=len(test_df),
-        lr_feature_names=feature_dict["lr"],
         xgb_feature_names=feature_dict["xgb"],
         mlp_feature_names=feature_dict["mlp"],
         margin_feature_names=feature_dict.get("margin", []),
@@ -288,8 +282,7 @@ def load_and_prep_data(
         f"Test: {summary.test_games}"
     )
     logger.info(
-        f"      Features -> LR: {len(summary.lr_feature_names)} | "
-        f"XGB: {len(summary.xgb_feature_names)} | "
+        f"      Features -> XGB: {len(summary.xgb_feature_names)} | "
         f"MLP: {len(summary.mlp_feature_names)} | "
         f"CatBoost: {len(summary.catboost_feature_names)} | "
         f"Margin: {len(summary.margin_feature_names)}"
@@ -308,7 +301,6 @@ def load_and_prep_data(
         )
 
     return TrainingData(
-        lr=_build_feature_set(train_df, val_df, test_df, feature_dict["lr"]),
         xgb=_build_feature_set(train_df, val_df, test_df, feature_dict["xgb"]),
         mlp=_build_feature_set(train_df, val_df, test_df, feature_dict["mlp"]),
         catboost=_build_feature_set(train_df, val_df, test_df, feature_dict.get("catboost", [])),

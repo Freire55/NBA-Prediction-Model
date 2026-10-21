@@ -12,12 +12,14 @@ import numpy as np
 import pandas as pd
 import pytest
 from sklearn.base import clone
-from sklearn.linear_model import LogisticRegression
+from sklearn.naive_bayes import GaussianNB
 from sklearn.model_selection import TimeSeriesSplit
 
 from training.calibration import (
     BetaCalibratedClassifier,
     BetaCalibrator,
+    PlattCalibratedClassifier,
+    PlattCalibrator,
     SplineCalibratedClassifier,
     SplineCalibrator,
     calibrate_estimator_with_model_selection,
@@ -51,7 +53,7 @@ def test_beta_calibrated_classifier_sklearn_contract():
     X = np.random.randn(100, 4)
     y = (X[:, 0] + X[:, 1] > 0).astype(int)
 
-    base = LogisticRegression()
+    base = GaussianNB()
     clf = BetaCalibratedClassifier(base_estimator=base, cv=TimeSeriesSplit(n_splits=3))
     clf.fit(X, y)
 
@@ -75,7 +77,7 @@ def test_beta_calibrated_classifier_sklearn_contract():
 
     # Test unwrapping
     unwrapped = unwrap_base_estimator(clf)
-    assert isinstance(unwrapped, LogisticRegression)
+    assert isinstance(unwrapped, GaussianNB)
 
 
 def test_calibrate_estimator_with_model_selection():
@@ -86,7 +88,7 @@ def test_calibrate_estimator_with_model_selection():
     tscv = TimeSeriesSplit(n_splits=3)
 
     calibrated_model, metadata = calibrate_estimator_with_model_selection(
-        estimator=LogisticRegression(),
+        estimator=GaussianNB(),
         X_train=X,
         y_train=y,
         tscv=tscv,
@@ -128,7 +130,7 @@ def test_spline_calibrated_classifier_sklearn_contract():
     X = np.random.randn(100, 4)
     y = (X[:, 0] + X[:, 1] > 0).astype(int)
 
-    base = LogisticRegression()
+    base = GaussianNB()
     clf = SplineCalibratedClassifier(base_estimator=base, cv=TimeSeriesSplit(n_splits=3))
     clf.fit(X, y)
 
@@ -146,7 +148,7 @@ def test_spline_calibrated_classifier_sklearn_contract():
 
     # Test unwrapping
     unwrapped = unwrap_base_estimator(clf)
-    assert isinstance(unwrapped, LogisticRegression)
+    assert isinstance(unwrapped, GaussianNB)
 
 
 def test_generate_oof_predictions_chronological_splits():
@@ -157,7 +159,7 @@ def test_generate_oof_predictions_chronological_splits():
     tscv = TimeSeriesSplit(n_splits=4)
 
     oof_probs, oof_targets = generate_oof_predictions(
-        estimator=LogisticRegression(),
+        estimator=GaussianNB(),
         X=X,
         y=y,
         cv=tscv,
@@ -167,3 +169,37 @@ def test_generate_oof_predictions_chronological_splits():
     assert len(oof_probs) == 80
     assert len(oof_targets) == 80
     assert np.all(oof_probs >= 0.0) and np.all(oof_probs <= 1.0)
+
+
+def test_platt_calibrator_and_classifier():
+    """Validates that PlattCalibratedClassifier follows scikit-learn protocols without redundant CV."""
+    np.random.seed(42)
+    X = np.random.randn(100, 4)
+    y = (X[:, 0] + X[:, 1] > 0).astype(int)
+
+    base = GaussianNB()
+    clf = PlattCalibratedClassifier(base_estimator=base, cv=TimeSeriesSplit(n_splits=3))
+    clf.fit(X, y)
+
+    assert clf.is_fitted_
+    assert hasattr(clf, "classes_")
+    assert len(clf.classes_) == 2
+
+    probs = clf.predict_proba(X)
+    assert probs.shape == (100, 2)
+    assert np.allclose(np.sum(probs, axis=1), 1.0)
+
+    preds = clf.predict(X)
+    assert preds.shape == (100,)
+    assert set(np.unique(preds)).issubset({0, 1})
+
+    # Test cloning
+    cloned = clone(clf)
+    assert cloned.base_estimator is not None
+    cloned.fit(X, y)
+    assert cloned.is_fitted_
+
+    # Test unwrapping
+    unwrapped = unwrap_base_estimator(clf)
+    assert isinstance(unwrapped, GaussianNB)
+
